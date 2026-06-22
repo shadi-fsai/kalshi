@@ -27,11 +27,20 @@ from kalshi.markets import (
     market_label,
     market_type_name,
     matchup_name,
+    parse_ts,
+    passes_high_water_mark,
     price_cents_for_side,
     resolution_time,
     scan_series_for_favorites,
+    series_ticker_for_market,
 )
 from ui import data
+
+# High-water-mark scan bounds: look back from a market's open time but never
+# more than this window (keeps the per-market candlestick payload small), and
+# cap how many candidate markets we fetch candles for behind one Scan click.
+HWM_LOOKBACK_HOURS = 168  # 7 days
+HWM_SCAN_CAP = 60
 
 
 def render_manual_ticker(
@@ -379,12 +388,13 @@ def render_find_games(
         fc1, fc2, fc3 = st.columns([2, 1, 1])
         with fc1:
             price_range = st.slider(
-                "Price range (c = implied %)",
+                "Current price band (c = implied %)",
                 min_value=1,
                 max_value=99,
                 value=(90, 95),
-                help="Only show contracts whose price falls in this band, "
-                "e.g. 90-95 = above 90% but at/below 95% implied.",
+                help="Pre-filter on the CURRENT ask, e.g. 90-95 = above 90% but "
+                "at/below 95% implied. Widen to 1-99 to ignore the current price "
+                "and rely on the high-water-mark filter below.",
             )
         min_price, max_price = price_range
         with fc2:
@@ -403,6 +413,28 @@ def render_find_games(
             "game(s) in scope. Narrow by sport/competition/live for faster, "
             "fuller scans."
         )
+
+        hwm_c1, hwm_c2 = st.columns([1, 3])
+        with hwm_c1:
+            hwm_on = st.checkbox(
+                "High-water-mark filter",
+                value=False,
+                help="Also require that a market's side reached a past high. "
+                "Combine with a wide current-price band (1-99) to find markets "
+                "that spiked and then pulled back.",
+            )
+        with hwm_c2:
+            hwm_min = st.number_input(
+                "Hit at least (c) in the past",
+                min_value=1,
+                max_value=99,
+                value=95,
+                step=1,
+                disabled=not hwm_on,
+                help="Keep only markets whose YES or NO side reached at least this "
+                f"price at some point since it opened (looking back up to "
+                f"{HWM_LOOKBACK_HOURS // 24} days). Uses candlestick highs.",
+            )
         if scan:
             try:
                 with st.spinner("Scanning all market types for favorites…"):
@@ -436,9 +468,74 @@ def render_find_games(
                     "hidden (no time-to-expiry for Sharpe). Check "
                     "\"Include markets resolving now\" above to show them."
                 )
+
+        # High-water-mark filter: keep only results whose side reached >= hwm_min
+        # at some past point, via cached per-market candlestick highs.
+        hwm_by_ticker: dict[str, tuple[float | None, float | None]] = {}
+        hwm_hidden = 0
+        hwm_truncated = False
+        if results and hwm_on:
+            now_ts = datetime.datetime.now(datetime.timezone.utc)
+            floor_dt = now_ts - datetime.timedelta(hours=HWM_LOOKBACK_HOURS)
+            end_ts = int(now_ts.timestamp())
+            kept = []
+            hwm_error: str | None = None
+            with st.spinner("Checking past high-water-marks…"):
+                for r in results:
+                    m = r["market"]
+                    ticker_t = m.get("ticker")
+                    series_t = series_ticker_for_market(m)
+                    if not ticker_t or not series_t:
+                        continue
+                    if ticker_t not in hwm_by_ticker:
+                        if len(hwm_by_ticker) >= HWM_SCAN_CAP:
+                            # Past the per-scan cap: leave this market unchecked
+                            # (and excluded) rather than firing more API calls.
+                            hwm_truncated = True
+                            continue
+                        start_dt = parse_ts(m.get("open_time"))
+                        if start_dt is None or start_dt < floor_dt:
+                            start_dt = floor_dt
+                        start_ts = int(start_dt.timestamp())
+                        if end_ts <= start_ts:
+                            hwm_by_ticker[ticker_t] = (None, None)
+                        else:
+                            window_minutes = (end_ts - start_ts) / 60.0
+                            period = 1 if window_minutes <= 180 else 60
+                            try:
+                                hwm_by_ticker[ticker_t] = data.fetch_high_water_marks(
+                                    client, series_t, ticker_t, start_ts, end_ts, period
+                                )
+                            except KalshiAPIError as exc:
+                                hwm_error = f"{exc.status_code}: {exc.message}"
+                                hwm_by_ticker[ticker_t] = (None, None)
+                    if passes_high_water_mark(r, hwm_by_ticker[ticker_t], hwm_min):
+                        kept.append(r)
+            if hwm_error:
+                st.warning(
+                    f"Some high-water-mark lookups failed ({hwm_error}); those "
+                    "markets were excluded."
+                )
+            hwm_hidden = len(results) - len(kept)
+            results = kept
+
         if results:
             lo, hi = st.session_state.get("fav_range", (min_price, max_price))
-            st.success(f"{len(results)} market(s) priced {lo}-{hi}c.")
+            msg = f"{len(results)} market(s) priced {lo}-{hi}c."
+            if hwm_on:
+                msg += f" Filtered to those that hit ≥ {int(hwm_min)}c in the past."
+            st.success(msg)
+            if hwm_hidden:
+                st.caption(
+                    f"{hwm_hidden} market(s) never reached {int(hwm_min)}c in the "
+                    "lookback window and were hidden."
+                )
+            if hwm_truncated:
+                st.warning(
+                    f"Only the first {HWM_SCAN_CAP} markets were checked for a past "
+                    "high-water-mark. Narrow the scope or tighten the price band "
+                    "for full coverage."
+                )
 
             def _fav_label(r: dict[str, Any]) -> str:
                 m = r["market"]
@@ -446,10 +543,16 @@ def render_find_games(
                 game = matchup_name(ev) if ev else m.get("event_ticker", "")
                 mtype = market_type_name(ev) if ev else ""
                 outcome = m.get("yes_sub_title") or m.get("ticker", "")
-                return (
+                base = (
                     f"{r['price']:.0f}c {r['side'].upper()}  ·  {game}  ·  "
                     f"{mtype}: {outcome}"
                 )
+                pair = hwm_by_ticker.get(m.get("ticker"))
+                if pair:
+                    side_hwm = pair[0] if r["side"] == "yes" else pair[1]
+                    if side_hwm is not None:
+                        base = f"{base}  ·  peak {side_hwm:.0f}c"
+                return base
 
             chosen = st.selectbox(
                 "Favorite markets", options=results, format_func=_fav_label

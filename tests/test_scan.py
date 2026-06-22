@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kalshi.markets import scan_series_for_favorites
+from kalshi.markets import passes_high_water_mark, scan_series_for_favorites
 
 
 class FakeClient:
@@ -163,3 +163,26 @@ def test_max_series_truncation_flag():
     scanned = {c["series_ticker"] for c in client.calls}
     assert scanned == {"S1", "S2"}
     assert len(results) == 2
+
+
+# --- passes_high_water_mark ----------------------------------------------
+
+
+def test_passes_high_water_mark_uses_side_and_threshold():
+    yes_result = {"side": "yes", "price": 60}
+    no_result = {"side": "no", "price": 60}
+    pair = (96.0, 40.0)  # (yes_hwm, no_hwm)
+    # YES side: 96 >= 95 -> passes; NO side: 40 < 95 -> excluded.
+    assert passes_high_water_mark(yes_result, pair, 95) is True
+    assert passes_high_water_mark(no_result, pair, 95) is False
+
+
+def test_passes_high_water_mark_boundary_is_inclusive():
+    assert passes_high_water_mark({"side": "yes"}, (95.0, None), 95) is True
+    assert passes_high_water_mark({"side": "yes"}, (94.999, None), 95) is False
+
+
+def test_passes_high_water_mark_none_is_excluded():
+    # No usable candle data for the side -> never passes.
+    assert passes_high_water_mark({"side": "yes"}, (None, 99.0), 50) is False
+    assert passes_high_water_mark({"side": "no"}, (99.0, None), 50) is False

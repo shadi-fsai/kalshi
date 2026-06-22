@@ -402,3 +402,21 @@ def scan_series_for_favorites(
                 break
     results.sort(key=lambda r: r["price"], reverse=True)
     return results, truncated
+
+
+def passes_high_water_mark(
+    result: dict[str, Any],
+    hwm_pair: tuple[float | None, float | None],
+    min_cents: float,
+) -> bool:
+    """Whether a favorites ``result``'s side ever reached ``min_cents``.
+
+    ``result`` is a ``{market, side, price}`` entry from
+    :func:`scan_series_for_favorites`; ``hwm_pair`` is the
+    ``(yes_hwm_cents, no_hwm_cents)`` returned by
+    ``kalshi.risk.high_water_marks_cents`` for that market. The side's
+    high-water-mark must be known and at least ``min_cents``.
+    """
+    yes_hwm, no_hwm = hwm_pair
+    hwm = yes_hwm if result.get("side") == "yes" else no_hwm
+    return hwm is not None and hwm >= min_cents

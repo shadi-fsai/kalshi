@@ -29,29 +29,90 @@ DAYS_PER_YEAR = 365.0
 MINUTES_PER_YEAR = DAYS_PER_YEAR * MINUTES_PER_DAY  # 525600
 
 
-def _ohlc_close_prob(dist: object) -> float | None:
-    """Closing value of a candlestick OHLC distribution, in probability units.
+def _ohlc_field_prob(dist: object, field: str) -> float | None:
+    """One OHLC field (``open``/``high``/``low``/``close``) in probability units.
 
     Kalshi candlesticks express prices as fixed-point dollar strings
-    (``close_dollars`` = "0.5600", already in 0-1 probability units) and also
-    carry a legacy integer-cents ``close`` field. Prefer the dollar field; fall
-    back to legacy cents (divided by 100). Returns ``None`` when neither is set.
+    (``{field}_dollars`` = "0.5600", already in 0-1 probability units) and also
+    carry a legacy integer-cents ``{field}`` field. Prefer the dollar field;
+    fall back to legacy cents (divided by 100). Returns ``None`` when neither is
+    set or parseable.
     """
     if not isinstance(dist, dict):
         return None
-    dollars = dist.get("close_dollars")
+    dollars = dist.get(f"{field}_dollars")
     if dollars not in (None, ""):
         try:
             return float(dollars)
         except (TypeError, ValueError):
             pass
-    cents = dist.get("close")
+    cents = dist.get(field)
     if cents not in (None, ""):
         try:
             return float(cents) / 100.0
         except (TypeError, ValueError):
             pass
     return None
+
+
+def _ohlc_close_prob(dist: object) -> float | None:
+    """Closing value of a candlestick OHLC distribution, in probability units."""
+    return _ohlc_field_prob(dist, "close")
+
+
+def _ohlc_high_prob(dist: object) -> float | None:
+    """Highest value of a candlestick OHLC distribution, in probability units."""
+    return _ohlc_field_prob(dist, "high")
+
+
+def _ohlc_low_prob(dist: object) -> float | None:
+    """Lowest value of a candlestick OHLC distribution, in probability units."""
+    return _ohlc_field_prob(dist, "low")
+
+
+def high_water_marks_cents(
+    candlesticks: list[dict],
+) -> tuple[float | None, float | None]:
+    """Per-side high-water-marks (highest price ever reached) in cents.
+
+    Mirrors the favorites scan's ask-per-side convention over a market's
+    candlestick history:
+
+    - YES high-water-mark = the highest YES ask reached = ``max`` of each
+      candle's ``yes_ask`` high (falling back to the traded ``price`` high, then
+      the ``yes_bid`` high when the ask is absent).
+    - NO high-water-mark = the highest NO ask reached. NO ask is the complement
+      of YES bid, so this is ``100 - min`` of each candle's ``yes_bid`` low
+      (falling back to the traded ``price`` low, then the ``yes_ask`` low).
+
+    Returns ``(yes_hwm_cents, no_hwm_cents)``; a side is ``None`` when no candle
+    carries usable data for it.
+    """
+    yes_highs: list[float] = []
+    yes_lows: list[float] = []
+    for candle in candlesticks:
+        if not isinstance(candle, dict):
+            continue
+        # YES side: prefer the ask high, then traded price, then bid.
+        high = _ohlc_high_prob(candle.get("yes_ask"))
+        if high is None:
+            high = _ohlc_high_prob(candle.get("price"))
+        if high is None:
+            high = _ohlc_high_prob(candle.get("yes_bid"))
+        if high is not None:
+            yes_highs.append(high)
+        # NO side: derived from the YES bid low (NO ask = 100 - YES bid),
+        # falling back to the traded price low, then the YES ask low.
+        low = _ohlc_low_prob(candle.get("yes_bid"))
+        if low is None:
+            low = _ohlc_low_prob(candle.get("price"))
+        if low is None:
+            low = _ohlc_low_prob(candle.get("yes_ask"))
+        if low is not None:
+            yes_lows.append(low)
+    yes_hwm = max(yes_highs) * 100.0 if yes_highs else None
+    no_hwm = (1.0 - min(yes_lows)) * 100.0 if yes_lows else None
+    return yes_hwm, no_hwm
 
 
 def mid_prices_from_candlesticks(candlesticks: list[dict]) -> list[float]:

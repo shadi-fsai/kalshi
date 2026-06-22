@@ -7,6 +7,7 @@ import math
 import pytest
 
 from kalshi.risk import (
+    high_water_marks_cents,
     mid_prices_from_candlesticks,
     realized_volatility,
     sharpe_metrics,
@@ -68,6 +69,46 @@ def test_mid_prices_skips_empty_candles():
         "not-a-dict",
     ]
     assert mid_prices_from_candlesticks(candles) == [0.32]
+
+# --- high_water_marks_cents ----------------------------------------------
+
+
+def test_high_water_marks_from_dollar_high_low():
+    # YES hwm = max yes_ask high; NO hwm = 100 - min yes_bid low.
+    candles = [
+        {
+            "yes_bid": {"high_dollars": "0.60", "low_dollars": "0.40"},
+            "yes_ask": {"high_dollars": "0.66", "low_dollars": "0.45"},
+        },
+        {
+            "yes_bid": {"high_dollars": "0.72", "low_dollars": "0.30"},
+            "yes_ask": {"high_dollars": "0.80", "low_dollars": "0.55"},
+        },
+    ]
+    yes_hwm, no_hwm = high_water_marks_cents(candles)
+    assert yes_hwm == pytest.approx(80.0)  # max(0.66, 0.80) * 100
+    assert no_hwm == pytest.approx(70.0)  # (1 - min(0.40, 0.30)) * 100
+
+
+def test_high_water_marks_legacy_integer_cents():
+    candles = [{"yes_bid": {"high": 60, "low": 35}, "yes_ask": {"high": 64, "low": 40}}]
+    yes_hwm, no_hwm = high_water_marks_cents(candles)
+    assert yes_hwm == pytest.approx(64.0)
+    assert no_hwm == pytest.approx(65.0)  # 100 - 35
+
+
+def test_high_water_marks_falls_back_to_traded_price():
+    # No bid/ask OHLC: YES high from price.high, NO from price.low complement.
+    candles = [{"price": {"high_dollars": "0.97", "low_dollars": "0.12"}}]
+    yes_hwm, no_hwm = high_water_marks_cents(candles)
+    assert yes_hwm == pytest.approx(97.0)
+    assert no_hwm == pytest.approx(88.0)  # 100 - 12
+
+
+def test_high_water_marks_none_when_no_data():
+    assert high_water_marks_cents([]) == (None, None)
+    assert high_water_marks_cents(["not-a-dict", {"price": {}}]) == (None, None)
+
 
 # --- realized_volatility -------------------------------------------------
 

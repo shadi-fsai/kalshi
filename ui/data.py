@@ -26,7 +26,7 @@ from kalshi.markets import (
     parse_ts,
     resolution_time,
 )
-from kalshi.risk import mid_prices_from_candlesticks
+from kalshi.risk import high_water_marks_cents, mid_prices_from_candlesticks
 
 
 @st.cache_resource(show_spinner=False)
@@ -252,6 +252,32 @@ def fetch_mid_prices(
     return mid_prices_from_candlesticks(resp.get("candlesticks", []))
 
 
+@st.cache_data(show_spinner=False, ttl=120)
+def fetch_high_water_marks(
+    _client: KalshiClient,
+    series_ticker: str,
+    ticker: str,
+    start_ts: int,
+    end_ts: int,
+    period_interval: int,
+) -> tuple[float | None, float | None]:
+    """Return ``(yes_hwm_cents, no_hwm_cents)`` from a market's candlestick history.
+
+    The per-side high-water-mark math lives in
+    ``kalshi.risk.high_water_marks_cents`` (pure + unit-tested). Cached for 2
+    minutes and keyed per market, so a market that appears as both a YES and a
+    NO favorite only fetches candlesticks once.
+    """
+    resp = _client.get_candlesticks(
+        series_ticker,
+        ticker,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        period_interval=period_interval,
+    )
+    return high_water_marks_cents(resp.get("candlesticks", []))
+
+
 __all__ = [
     "KalshiAPIError",
     "build_client",
@@ -265,4 +291,5 @@ __all__ = [
     "fetch_live_data",
     "fetch_fee_model",
     "fetch_mid_prices",
+    "fetch_high_water_marks",
 ]
