@@ -39,10 +39,23 @@ edge. It computes the Kelly-optimal stake and the number of contracts to buy.
 - Portfolio view (**Portfolio** page): cash balance, portfolio value, current
   positions (YES/NO contracts, exposure, realized P&L, fees paid), and resting
   orders with per-order cancel.
+- Position correlation matrix (**Portfolio** page): a color-coded matrix of the
+  empirical correlation between your held positions, computed from each
+  position's mid-price returns over a selectable window (6h/24h/7d) and oriented
+  to the side you hold (a NO holding uses `1 - YES`), so a high positive value
+  means those bets tend to win and lose together. Pairs at or above an
+  adjustable `|correlation|` threshold are called out so concentrated risk is
+  obvious at a glance.
 - Order placement: a limit-order ticket (Buy/Sell x YES/NO, count, limit price)
   with a fee-inclusive cost preview and a two-step confirm before submitting a
   REAL order via Kalshi's V2 endpoint. YES/NO intent is translated to the
-  YES-book bid/ask the API expects. Defaults are prefilled from the Kelly sizing.
+  YES-book bid/ask the API expects (e.g. **buy NO @ 30c rests as SELL YES @ 70c**),
+  and the order carries Kalshi's canonical `outcome_side` so its UI labels it
+  "buy NO" rather than the equivalent "sell YES". An order-mode selector chooses
+  execution style: **Maker (post-only)** rests and never pays a taker fee
+  (auto-cancelled if it would cross), **Taker (immediate)** crosses now via
+  immediate-or-cancel, and **Limit GTC** is the default resting limit. Defaults
+  are prefilled from the Kelly sizing.
 - Live "in the money" flags: for in-progress games the app pulls the current
   score from Kalshi's live-data endpoint and flags each market 🟢 ITM / 🔴 OTM
   based on the live score (e.g. a 3:0 game makes "Over 2.5 goals" in the money).

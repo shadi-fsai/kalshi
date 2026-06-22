@@ -26,7 +26,12 @@ from kalshi.markets import (
     parse_ts,
     resolution_time,
 )
-from kalshi.risk import high_water_marks_cents, mid_prices_from_candlesticks
+from kalshi.risk import (
+    ask_price_series_from_candlesticks,
+    high_water_marks_cents,
+    mid_price_series_from_candlesticks,
+    mid_prices_from_candlesticks,
+)
 
 
 @st.cache_resource(show_spinner=False)
@@ -278,6 +283,58 @@ def fetch_high_water_marks(
     return high_water_marks_cents(resp.get("candlesticks", []))
 
 
+@st.cache_data(show_spinner=False, ttl=60)
+def fetch_ask_price_series(
+    _client: KalshiClient,
+    series_ticker: str,
+    ticker: str,
+    side: str,
+    start_ts: int,
+    end_ts: int,
+    period_interval: int,
+) -> list[tuple[int, float]]:
+    """Return a timestamped ask-price series (cents) for ``side`` from candlesticks.
+
+    Used by the pre-order price chart. The per-side ask math lives in
+    ``kalshi.risk.ask_price_series_from_candlesticks`` (pure + unit-tested).
+    Cached for 60s and keyed by side + window so toggling either refetches.
+    """
+    resp = _client.get_candlesticks(
+        series_ticker,
+        ticker,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        period_interval=period_interval,
+    )
+    return ask_price_series_from_candlesticks(resp.get("candlesticks", []), side)
+
+
+@st.cache_data(show_spinner=False, ttl=120)
+def fetch_mid_price_series(
+    _client: KalshiClient,
+    series_ticker: str,
+    ticker: str,
+    side: str,
+    start_ts: int,
+    end_ts: int,
+    period_interval: int,
+) -> list[tuple[int, float]]:
+    """Return a timestamped mid-price series (probability units) oriented to ``side``.
+
+    Used by the portfolio correlation matrix. The per-side mid math lives in
+    ``kalshi.risk.mid_price_series_from_candlesticks`` (pure + unit-tested).
+    Cached for 2 minutes and keyed per market + side.
+    """
+    resp = _client.get_candlesticks(
+        series_ticker,
+        ticker,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        period_interval=period_interval,
+    )
+    return mid_price_series_from_candlesticks(resp.get("candlesticks", []), side)
+
+
 __all__ = [
     "KalshiAPIError",
     "build_client",
@@ -292,4 +349,6 @@ __all__ = [
     "fetch_fee_model",
     "fetch_mid_prices",
     "fetch_high_water_marks",
+    "fetch_ask_price_series",
+    "fetch_mid_price_series",
 ]

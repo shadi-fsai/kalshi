@@ -9,12 +9,15 @@ def test_buy_yes_is_bid_at_same_price():
     order = to_book_order("buy", "yes", 56)
     assert order == BookOrder(book_side="bid", yes_price_dollars=0.56)
     assert order.yes_price_cents == pytest.approx(56)
+    assert order.outcome_side == "yes"
 
 
 def test_sell_yes_is_ask_at_same_price():
     order = to_book_order("sell", "yes", 56)
     assert order.book_side == "ask"
     assert order.yes_price_dollars == pytest.approx(0.56)
+    # Sell YES is positioned for the NO outcome.
+    assert order.outcome_side == "no"
 
 
 def test_buy_no_is_ask_at_complement_price():
@@ -22,6 +25,7 @@ def test_buy_no_is_ask_at_complement_price():
     order = to_book_order("buy", "no", 30)
     assert order.book_side == "ask"
     assert order.yes_price_dollars == pytest.approx(0.70)
+    assert order.outcome_side == "no"
 
 
 def test_sell_no_is_bid_at_complement_price():
@@ -29,6 +33,7 @@ def test_sell_no_is_bid_at_complement_price():
     order = to_book_order("sell", "no", 30)
     assert order.book_side == "bid"
     assert order.yes_price_dollars == pytest.approx(0.70)
+    assert order.outcome_side == "yes"
 
 
 @pytest.mark.parametrize("action", ["BUY", "Sell"])

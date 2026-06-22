@@ -7,7 +7,11 @@ import math
 import pytest
 
 from kalshi.risk import (
+    ask_price_series_from_candlesticks,
+    correlation_matrix,
+    high_correlation_pairs,
     high_water_marks_cents,
+    mid_price_series_from_candlesticks,
     mid_prices_from_candlesticks,
     realized_volatility,
     sharpe_metrics,
@@ -108,6 +112,59 @@ def test_high_water_marks_falls_back_to_traded_price():
 def test_high_water_marks_none_when_no_data():
     assert high_water_marks_cents([]) == (None, None)
     assert high_water_marks_cents(["not-a-dict", {"price": {}}]) == (None, None)
+
+
+# --- ask_price_series_from_candlesticks ----------------------------------
+
+
+def test_ask_price_series_yes_uses_yes_ask_close():
+    candles = [
+        {"end_period_ts": 100, "yes_ask": {"close_dollars": "0.80"}},
+        {"end_period_ts": 160, "yes_ask": {"close_dollars": "0.82"}},
+    ]
+    assert ask_price_series_from_candlesticks(candles, "yes") == [
+        (100, pytest.approx(80.0)),
+        (160, pytest.approx(82.0)),
+    ]
+
+
+def test_ask_price_series_no_is_complement_of_yes_bid():
+    # NO ask = 1 - YES bid, in cents.
+    candles = [{"end_period_ts": 100, "yes_bid": {"close_dollars": "0.30"}}]
+    series = ask_price_series_from_candlesticks(candles, "no")
+    assert series == [(100, pytest.approx(70.0))]
+
+
+def test_ask_price_series_falls_back_to_traded_price():
+    # YES: no ask -> traded price close. NO: no bid -> 1 - traded price close.
+    candles = [{"end_period_ts": 100, "price": {"close_dollars": "0.40"}}]
+    assert ask_price_series_from_candlesticks(candles, "yes") == [
+        (100, pytest.approx(40.0))
+    ]
+    assert ask_price_series_from_candlesticks(candles, "no") == [
+        (100, pytest.approx(60.0))
+    ]
+
+
+def test_ask_price_series_no_falls_back_to_yes_ask():
+    # NO side, only yes_ask present: NO ask = 1 - yes_ask close.
+    candles = [{"end_period_ts": 100, "yes_ask": {"close_dollars": "0.85"}}]
+    assert ask_price_series_from_candlesticks(candles, "no") == [
+        (100, pytest.approx(15.0))
+    ]
+
+
+def test_ask_price_series_legacy_cents_and_skips():
+    candles = [
+        {"yes_ask": {"close": 55}},  # no end_period_ts -> skip
+        {"end_period_ts": "bad", "yes_ask": {"close": 55}},  # bad ts -> skip
+        {"end_period_ts": 200, "price": {}},  # no usable price -> skip
+        "not-a-dict",
+        {"end_period_ts": 300, "yes_ask": {"close": 55}},  # legacy cents -> 55c
+    ]
+    assert ask_price_series_from_candlesticks(candles, "yes") == [
+        (300, pytest.approx(55.0))
+    ]
 
 
 # --- realized_volatility -------------------------------------------------
@@ -287,3 +344,125 @@ def test_sharpe_minute_resolution_subhour():
 def test_sharpe_requires_a_horizon():
     with pytest.raises(ValueError, match="time_to_expiry"):
         sharpe_metrics(edge=0.03, win_prob=0.5)
+
+
+# --- mid_price_series_from_candlesticks ----------------------------------
+
+
+def test_mid_price_series_yes_uses_midpoint():
+    candles = [
+        {
+            "end_period_ts": 100,
+            "yes_bid": {"close_dollars": "0.40"},
+            "yes_ask": {"close_dollars": "0.60"},
+        },
+        {
+            "end_period_ts": 160,
+            "yes_bid": {"close_dollars": "0.50"},
+            "yes_ask": {"close_dollars": "0.70"},
+        },
+    ]
+    assert mid_price_series_from_candlesticks(candles, "yes") == [
+        (100, pytest.approx(0.50)),
+        (160, pytest.approx(0.60)),
+    ]
+
+
+def test_mid_price_series_no_is_complement():
+    candles = [
+        {
+            "end_period_ts": 100,
+            "yes_bid": {"close_dollars": "0.40"},
+            "yes_ask": {"close_dollars": "0.60"},
+        }
+    ]
+    # YES mid is 0.50, so the NO holding value is 1 - 0.50 = 0.50 here.
+    assert mid_price_series_from_candlesticks(candles, "no") == [(100, pytest.approx(0.50))]
+    # Asymmetric quote: YES mid 0.70 -> NO value 0.30.
+    candles2 = [
+        {
+            "end_period_ts": 100,
+            "yes_bid": {"close_dollars": "0.60"},
+            "yes_ask": {"close_dollars": "0.80"},
+        }
+    ]
+    assert mid_price_series_from_candlesticks(candles2, "no") == [
+        (100, pytest.approx(0.30))
+    ]
+
+
+def test_mid_price_series_skips_unusable_and_falls_back_to_price():
+    candles = [
+        {"yes_bid": {"close": 50}},  # no end_period_ts -> skip
+        {"end_period_ts": "bad", "price": {"close_dollars": "0.5"}},  # bad ts -> skip
+        {"end_period_ts": 200, "price": {}},  # no usable price -> skip
+        "not-a-dict",
+        {"end_period_ts": 300, "price": {"close_dollars": "0.40"}},  # traded fallback
+    ]
+    assert mid_price_series_from_candlesticks(candles, "yes") == [
+        (300, pytest.approx(0.40))
+    ]
+
+
+# --- correlation_matrix / high_correlation_pairs -------------------------
+
+
+def test_correlation_matrix_perfectly_correlated():
+    a = [(1, 0.10), (2, 0.20), (3, 0.10), (4, 0.30)]  # returns +.1 -.1 +.2
+    b = [(1, 0.50), (2, 0.60), (3, 0.50), (4, 0.70)]  # identical returns
+    result = correlation_matrix({"A": a, "B": b})
+    assert result.labels == ["A", "B"]
+    assert result.matrix[0][0] == 1.0
+    assert result.matrix[0][1] == pytest.approx(1.0)
+    assert result.matrix[1][0] == pytest.approx(1.0)
+    assert result.overlap == 3
+
+
+def test_correlation_matrix_anti_correlated():
+    a = [(1, 0.10), (2, 0.20), (3, 0.10), (4, 0.20)]  # returns +.1 -.1 +.1
+    b = [(1, 0.80), (2, 0.70), (3, 0.80), (4, 0.70)]  # returns -.1 +.1 -.1
+    result = correlation_matrix({"A": a, "B": b})
+    assert result.matrix[0][1] == pytest.approx(-1.0)
+
+
+def test_correlation_matrix_insufficient_overlap_is_none():
+    # Only two shared timestamps -> one return sample, below min_points.
+    a = [(1, 0.10), (2, 0.20)]
+    b = [(1, 0.50), (2, 0.70)]
+    result = correlation_matrix({"A": a, "B": b})
+    assert result.matrix[0][1] is None
+    assert result.overlap == 1
+
+
+def test_correlation_matrix_constant_series_is_none():
+    a = [(1, 0.10), (2, 0.20), (3, 0.30), (4, 0.40)]
+    flat = [(1, 0.50), (2, 0.50), (3, 0.50), (4, 0.50)]  # zero variance returns
+    result = correlation_matrix({"A": a, "FLAT": flat})
+    assert result.matrix[0][1] is None
+
+
+def test_correlation_matrix_aligns_on_common_timestamps():
+    # B is missing ts=2; only 1,3,4,5 are shared -> returns over those.
+    a = [(1, 0.10), (2, 0.99), (3, 0.30), (4, 0.20), (5, 0.40)]
+    b = [(1, 0.50), (3, 0.70), (4, 0.60), (5, 0.80)]
+    result = correlation_matrix({"A": a, "B": b})
+    assert result.overlap == 3
+    assert result.matrix[0][1] == pytest.approx(1.0)
+
+
+def test_high_correlation_pairs_threshold_and_order():
+    result = correlation_matrix(
+        {
+            "A": [(1, 0.1), (2, 0.2), (3, 0.1), (4, 0.3)],  # returns +.1 -.1 +.2
+            "B": [(1, 0.5), (2, 0.6), (3, 0.5), (4, 0.7)],  # corr ~ +1 with A
+            "C": [(1, 0.9), (2, 0.8), (3, 0.9), (4, 0.7)],  # corr ~ -1 with A and B
+        }
+    )
+    pairs = high_correlation_pairs(result, threshold=0.7)
+    # All three pairs are |1.0|; just assert they are all surfaced and sorted.
+    assert len(pairs) == 3
+    assert all(abs(c) >= 0.7 for _, _, c in pairs)
+    assert pairs == sorted(pairs, key=lambda p: abs(p[2]), reverse=True)
+
+    # A high threshold above the achievable magnitude yields nothing.
+    assert high_correlation_pairs(result, threshold=1.01) == []

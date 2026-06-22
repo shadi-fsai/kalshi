@@ -44,7 +44,14 @@ class FakeClient:
                     "market_exposure_dollars": "56.00",
                     "realized_pnl_dollars": "0.00",
                     "fees_paid_dollars": "0.10",
-                }
+                },
+                {
+                    "ticker": "KXWCGAME-26JUN20ESPFRA-ESP",
+                    "position_fp": "-5000000000",
+                    "market_exposure_dollars": "20.00",
+                    "realized_pnl_dollars": "0.00",
+                    "fees_paid_dollars": "0.05",
+                },
             ]
         }
 
@@ -87,6 +94,14 @@ def patch_data(monkeypatch, market):
     monkeypatch.setattr(data, "fetch_live_data", lambda _c, mid: None)
     monkeypatch.setattr(data, "fetch_fee_model", lambda _c, s: None)
     monkeypatch.setattr(data, "fetch_mid_prices", lambda _c, *a: [])
+    monkeypatch.setattr(data, "fetch_ask_price_series", lambda _c, *a, **k: [])
+    # Canned correlated mid-price series so the portfolio correlation matrix
+    # renders (the two smoke positions get a shared timestamp grid).
+    monkeypatch.setattr(
+        data,
+        "fetch_mid_price_series",
+        lambda _c, *a, **k: [(1, 0.40), (2, 0.50), (3, 0.60), (4, 0.70)],
+    )
     return markets_by_ticker
 
 

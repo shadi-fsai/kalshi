@@ -14,6 +14,7 @@ import math
 import uuid
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 from kalshi.client import KalshiAPIError, KalshiClient
@@ -35,6 +36,37 @@ from kalshi.risk import (
 )
 from ui import data
 from ui.settings import Settings
+
+# Pre-order price chart: how far back "Since open" looks before capping, so the
+# candlestick payload stays bounded for long-running (tournament) markets.
+HIST_SINCE_OPEN_CAP_HOURS = 168  # 7 days
+# Window selector options -> lookback in hours; None means "since the market
+# opened" (capped to HIST_SINCE_OPEN_CAP_HOURS).
+_HIST_WINDOWS: dict[str, int | None] = {"1h": 1, "6h": 6, "24h": 24, "Since open": None}
+
+# Order execution modes -> (post_only, time_in_force) for create_order, plus a
+# one-line help string. Maker rests and never pays a taker fee; Taker crosses
+# immediately; Limit GTC is the default resting limit (maker or taker by price).
+_ORDER_MODES: dict[str, tuple[bool, str, str]] = {
+    "Maker (post-only)": (
+        True,
+        "good_till_canceled",
+        "Rests on the book and never crosses; pays no taker fee. Auto-cancelled "
+        "if it would match a resting order.",
+    ),
+    "Taker (immediate)": (
+        False,
+        "immediate_or_cancel",
+        "Crosses the book now, filling whatever is available and cancelling the "
+        "rest. Pays the taker fee.",
+    ),
+    "Limit GTC (default)": (
+        False,
+        "good_till_canceled",
+        "Resting limit order: fills as taker if your price crosses, otherwise "
+        "rests as maker until matched or cancelled.",
+    ),
+}
 
 
 def render_order_ticket(
@@ -91,23 +123,44 @@ def render_order_ticket(
     summary[2].metric("Contracts", f"{count:,}")
     summary[3].metric("Limit price", f"{price_c:.0f}c")
 
+    # YES-book representation: buying NO rests as a SELL YES at (100 - price).
+    book_verb = "BUY YES" if book.book_side == "bid" else "SELL YES"
     if action == "buy":
         est_cost = count * price_dollars + fee_amt
         st.caption(
-            f"Maps to YES-book **{book.book_side.upper()}** @ "
-            f"{book.yes_price_cents:.0f}c. Est. cost **${est_cost:,.2f}** "
+            f"Positioned for **{book.outcome_side.upper()}**; rests on the "
+            f"YES book as **{book_verb}** @ {book.yes_price_cents:.0f}c. "
+            f"Est. cost **${est_cost:,.2f}** "
             f"= {count} x {price_c:.0f}c + **${fee_amt:,.2f}** fee ({fee_note})."
         )
     else:
         proceeds = count * price_dollars - fee_amt
         st.caption(
-            f"Maps to YES-book **{book.book_side.upper()}** @ "
-            f"{book.yes_price_cents:.0f}c. Est. proceeds **${proceeds:,.2f}** "
+            f"Positioned for **{book.outcome_side.upper()}**; rests on the "
+            f"YES book as **{book_verb}** @ {book.yes_price_cents:.0f}c. "
+            f"Est. proceeds **${proceeds:,.2f}** "
             f"= {count} x {price_c:.0f}c - **${fee_amt:,.2f}** fee ({fee_note})."
         )
 
+    # Execution mode: lets the user choose maker (post-only) vs taker (IoC) vs
+    # the default resting limit. Drives post_only / time_in_force on submit.
+    mode = st.radio(
+        "Order mode",
+        list(_ORDER_MODES),
+        index=len(_ORDER_MODES) - 1,  # default to Limit GTC (current behavior)
+        horizontal=True,
+        key="ot_mode",
+    )
+    post_only, time_in_force, mode_help = _ORDER_MODES[mode]
+    st.caption(mode_help)
+    if post_only:
+        st.caption(
+            "Maker fills are not charged the taker fee shown above; the estimate "
+            "is conservative for a post-only order."
+        )
+
     # Two-step confirm: stash the prepared order, then require a second click.
-    ticket_key = (ticker, action, side, count, price_c)
+    ticket_key = (ticker, action, side, count, price_c, mode)
     if st.button("Prepare order", type="secondary", key="ot_prepare"):
         st.session_state["pending_order"] = ticket_key
 
@@ -116,7 +169,8 @@ def render_order_ticket(
         st.warning(
             f"Confirm: **{action.upper()} {count} {side.upper()}** on "
             f"`{ticker}` at {price_c:.0f}c "
-            f"(YES-book {book.book_side} @ {book.yes_price_cents:.0f}c)."
+            f"(YES-book {book.book_side} @ {book.yes_price_cents:.0f}c, "
+            f"outcome {book.outcome_side}, {mode})."
         )
         cc = st.columns(2)
         if cc[0].button("Confirm & submit", type="primary", key="ot_confirm"):
@@ -127,6 +181,9 @@ def render_order_ticket(
                     count=int(count),
                     price_dollars=book.yes_price_dollars,
                     client_order_id=str(uuid.uuid4()),
+                    outcome_side=book.outcome_side,
+                    post_only=post_only,
+                    time_in_force=time_in_force,
                 )
                 order = resp.get("order", resp)
                 oid = order.get("order_id") or order.get("id") or "(unknown)"
@@ -557,6 +614,16 @@ def render_sizer(
         )
 
     st.divider()
+    _render_price_chart(
+        client,
+        selected_market,
+        series_t,
+        side=side,
+        buy_price_cents=price_cents,
+        selected_game_start=selected_game_start,
+    )
+
+    st.divider()
     render_order_ticket(
         client,
         selected_market,
@@ -566,4 +633,86 @@ def render_sizer(
         side=side,
         count=result.contracts,
         price_cents=price_cents,
+    )
+
+
+def _render_price_chart(
+    client: KalshiClient,
+    market: dict[str, Any],
+    series_ticker: str | None,
+    *,
+    side: str,
+    buy_price_cents: float,
+    selected_game_start: datetime.datetime | None = None,
+) -> None:
+    """Show the side-being-bought's recent ask price, with the buy price overlaid.
+
+    Read-only history up to now (independent of the settlement-time override), so
+    you can see where your fill price sits versus the market's recent range right
+    before placing the order.
+    """
+    st.markdown("#### Price history")
+    ticker = market.get("ticker")
+    if not series_ticker or not ticker:
+        st.caption("No price history available for this market (missing ticker).")
+        return
+
+    window_label = st.radio(
+        "Window",
+        list(_HIST_WINDOWS),
+        index=len(_HIST_WINDOWS) - 1,  # default "Since open"
+        horizontal=True,
+        key="hist_window",
+        help="How far back to chart the price. 'Since open' goes back to the "
+        f"market's open time, capped at {HIST_SINCE_OPEN_CAP_HOURS // 24} days.",
+    )
+
+    now_ts = datetime.datetime.now(datetime.timezone.utc)
+    hours = _HIST_WINDOWS[window_label]
+    if hours is None:
+        floor_dt = now_ts - datetime.timedelta(hours=HIST_SINCE_OPEN_CAP_HOURS)
+        start_dt = selected_game_start or parse_ts(market.get("open_time"))
+        if start_dt is None or start_dt < floor_dt:
+            start_dt = floor_dt
+    else:
+        start_dt = now_ts - datetime.timedelta(hours=hours)
+
+    start_ts = int(start_dt.timestamp())
+    end_ts = int(now_ts.timestamp())
+    if end_ts <= start_ts:
+        st.caption(
+            "No price history yet for this market in the selected window "
+            "(it may not have started trading)."
+        )
+        return
+
+    window_minutes = (end_ts - start_ts) / 60.0
+    period = 1 if window_minutes <= 180 else 60
+
+    try:
+        points = data.fetch_ask_price_series(
+            client, series_ticker, ticker, side, start_ts, end_ts, period
+        )
+    except KalshiAPIError as exc:
+        st.warning(
+            f"Couldn't load price history ({exc.status_code}): {exc.message}."
+        )
+        return
+
+    if not points:
+        st.caption("No price history in the selected window.")
+        return
+
+    ask_col = f"{side.upper()} ask (c)"
+    frame = pd.DataFrame(
+        {
+            ask_col: [price for _, price in points],
+            "Your buy price (c)": [float(buy_price_cents)] * len(points),
+        },
+        index=pd.to_datetime([ts for ts, _ in points], unit="s", utc=True),
+    )
+    st.line_chart(frame)
+    st.caption(
+        f"{side.upper()} ask over the selected window (cents). The flat line is "
+        f"your current buy price ({buy_price_cents:.0f}c)."
     )

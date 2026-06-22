@@ -290,6 +290,8 @@ class KalshiClient:
         count: int,
         price_dollars: float,
         client_order_id: str,
+        outcome_side: str | None = None,
+        post_only: bool = False,
         time_in_force: str = "good_till_canceled",
         self_trade_prevention_type: str = "taker_at_cross",
     ) -> dict[str, Any]:
@@ -300,10 +302,21 @@ class KalshiClient:
         ``1 - price``). ``price_dollars`` is the YES-book price in dollars
         (e.g. 0.56). This places a REAL order on the configured environment.
 
+        ``outcome_side`` (``"yes"``/``"no"``) is Kalshi's canonical directional
+        field: it lets the Kalshi UI display a buy-NO order as "buy NO" rather
+        than the economically equivalent "sell YES". ``post_only=True`` makes the
+        order maker-only -- it never crosses the book or pays a taker fee, and is
+        auto-cancelled if it would match a resting order. Use
+        ``time_in_force="immediate_or_cancel"`` for taker (cross-now) behavior.
+
         See https://docs.kalshi.com/api-reference/orders/create-order-v2
         """
         if book_side not in ("bid", "ask"):
             raise ValueError(f"book_side must be 'bid' or 'ask' (got {book_side!r}).")
+        if outcome_side is not None and outcome_side not in ("yes", "no"):
+            raise ValueError(
+                f"outcome_side must be 'yes', 'no', or None (got {outcome_side!r})."
+            )
         body: dict[str, Any] = {
             "ticker": ticker,
             "side": book_side,
@@ -313,6 +326,10 @@ class KalshiClient:
             "self_trade_prevention_type": self_trade_prevention_type,
             "client_order_id": client_order_id,
         }
+        if outcome_side is not None:
+            body["outcome_side"] = outcome_side
+        if post_only:
+            body["post_only"] = True
         return self._request("POST", "/portfolio/events/orders", body=body)
 
     def cancel_order(self, order_id: str) -> dict[str, Any]:

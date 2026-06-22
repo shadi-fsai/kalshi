@@ -119,6 +119,56 @@ def test_create_order_invalid_book_side_raises(client):
         )
 
 
+def test_create_order_includes_outcome_side_and_post_only(client, requests_mock):
+    requests_mock.post(
+        f"{DEFAULT_BASE_URL}/portfolio/events/orders",
+        json={"order": {"order_id": "O2"}},
+    )
+    client.create_order(
+        ticker="T",
+        book_side="ask",
+        count=3,
+        price_dollars=0.70,
+        client_order_id="cid-2",
+        outcome_side="no",
+        post_only=True,
+        time_in_force="immediate_or_cancel",
+    )
+    body = json.loads(requests_mock.last_request.body)
+    assert body["outcome_side"] == "no"
+    assert body["post_only"] is True
+    assert body["time_in_force"] == "immediate_or_cancel"
+
+
+def test_create_order_omits_optional_fields_by_default(client, requests_mock):
+    requests_mock.post(
+        f"{DEFAULT_BASE_URL}/portfolio/events/orders",
+        json={"order": {"order_id": "O3"}},
+    )
+    client.create_order(
+        ticker="T",
+        book_side="bid",
+        count=1,
+        price_dollars=0.5,
+        client_order_id="cid-3",
+    )
+    body = json.loads(requests_mock.last_request.body)
+    assert "outcome_side" not in body
+    assert "post_only" not in body
+
+
+def test_create_order_invalid_outcome_side_raises(client):
+    with pytest.raises(ValueError, match="outcome_side must be"):
+        client.create_order(
+            ticker="T",
+            book_side="bid",
+            count=1,
+            price_dollars=0.5,
+            client_order_id="c",
+            outcome_side="maybe",
+        )
+
+
 def test_cancel_order_204_returns_empty(client, requests_mock):
     requests_mock.delete(
         f"{DEFAULT_BASE_URL}/portfolio/orders/O1", status_code=204

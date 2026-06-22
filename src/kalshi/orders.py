@@ -20,7 +20,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class BookOrder:
-    """A V2 order expressed on the YES book."""
+    """A V2 order expressed on the YES book.
+
+    ``outcome_side`` is Kalshi's canonical directional field (the outcome you
+    profit from). It mirrors ``book_side`` (``bid`` == ``yes``, ``ask`` == ``no``)
+    and is what makes Kalshi's UI label a buy-NO order as "buy NO" rather than the
+    economically equivalent "sell YES".
+    """
 
     book_side: str  # "bid" (buy YES) or "ask" (sell YES)
     yes_price_dollars: float  # YES-book price in dollars (0.01-0.99)
@@ -28,6 +34,11 @@ class BookOrder:
     @property
     def yes_price_cents(self) -> float:
         return round(self.yes_price_dollars * 100.0, 4)
+
+    @property
+    def outcome_side(self) -> str:
+        """The outcome the order is positioned for: ``"yes"`` (bid) or ``"no"`` (ask)."""
+        return "yes" if self.book_side == "bid" else "no"
 
 
 def to_book_order(action: str, side: str, price_cents: float) -> BookOrder:

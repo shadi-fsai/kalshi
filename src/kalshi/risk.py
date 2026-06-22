@@ -115,6 +115,54 @@ def high_water_marks_cents(
     return yes_hwm, no_hwm
 
 
+def ask_price_series_from_candlesticks(
+    candlesticks: list[dict], side: str
+) -> list[tuple[int, float]]:
+    """Timestamped ask-price series (cents) for one side, oldest first.
+
+    Mirrors the ask-per-side convention used elsewhere (what you'd pay to buy
+    that side):
+
+    - ``side == "yes"``: the ``yes_ask`` close (falling back to the traded
+      ``price`` close, then the ``yes_bid`` close).
+    - ``side == "no"``: the NO ask, which is the complement of the YES bid, so
+      ``1 - yes_bid`` close (falling back to ``1 - price`` close, then
+      ``1 - yes_ask`` close).
+
+    Each entry is ``(end_period_ts, price_cents)``. Candles missing
+    ``end_period_ts`` or any usable price are skipped.
+    """
+    is_yes = side == "yes"
+    series: list[tuple[int, float]] = []
+    for candle in candlesticks:
+        if not isinstance(candle, dict):
+            continue
+        ts = candle.get("end_period_ts")
+        if ts in (None, ""):
+            continue
+        try:
+            ts_int = int(ts)
+        except (TypeError, ValueError):
+            continue
+        if is_yes:
+            prob = _ohlc_close_prob(candle.get("yes_ask"))
+            if prob is None:
+                prob = _ohlc_close_prob(candle.get("price"))
+            if prob is None:
+                prob = _ohlc_close_prob(candle.get("yes_bid"))
+        else:
+            base = _ohlc_close_prob(candle.get("yes_bid"))
+            if base is None:
+                base = _ohlc_close_prob(candle.get("price"))
+            if base is None:
+                base = _ohlc_close_prob(candle.get("yes_ask"))
+            prob = None if base is None else 1.0 - base
+        if prob is None:
+            continue
+        series.append((ts_int, prob * 100.0))
+    return series
+
+
 def mid_prices_from_candlesticks(candlesticks: list[dict]) -> list[float]:
     """Build a price series (probability units, 0-1) from candlesticks, oldest first.
 
@@ -140,6 +188,132 @@ def mid_prices_from_candlesticks(candlesticks: list[dict]) -> list[float]:
         elif ask is not None:
             prices.append(ask)
     return prices
+
+
+def mid_price_series_from_candlesticks(
+    candlesticks: list[dict], side: str
+) -> list[tuple[int, float]]:
+    """Timestamped mid-price series (probability units) oriented to ``side``.
+
+    Uses the same YES bid/ask-midpoint basis as
+    :func:`mid_prices_from_candlesticks` (falling back to the traded ``price``
+    close, then a single available side), but keeps each candle's
+    ``end_period_ts`` and orients the value to the side held:
+
+    - ``side == "yes"``: the YES mid (the value of a YES holding).
+    - ``side == "no"``: ``1 - yes_mid`` (the value of a NO holding).
+
+    Each entry is ``(end_period_ts, value_prob)``. Candles missing
+    ``end_period_ts`` or any usable price are skipped. This makes two positions
+    "move together" precisely when the bets tend to win/lose together.
+    """
+    is_yes = side == "yes"
+    series: list[tuple[int, float]] = []
+    for candle in candlesticks:
+        if not isinstance(candle, dict):
+            continue
+        ts = candle.get("end_period_ts")
+        if ts in (None, ""):
+            continue
+        try:
+            ts_int = int(ts)
+        except (TypeError, ValueError):
+            continue
+        bid = _ohlc_close_prob(candle.get("yes_bid"))
+        ask = _ohlc_close_prob(candle.get("yes_ask"))
+        if bid is not None and ask is not None:
+            yes_mid: float | None = (bid + ask) / 2.0
+        else:
+            traded = _ohlc_close_prob(candle.get("price"))
+            yes_mid = traded if traded is not None else (bid if bid is not None else ask)
+        if yes_mid is None:
+            continue
+        value = yes_mid if is_yes else 1.0 - yes_mid
+        series.append((ts_int, value))
+    return series
+
+
+@dataclass
+class CorrelationMatrix:
+    """Pairwise correlations across aligned position return series."""
+
+    labels: list[str]
+    matrix: list[list[float | None]]
+    overlap: int  # number of return samples shared across all series
+
+
+def _pearson(xs: list[float], ys: list[float]) -> float | None:
+    """Pearson correlation of two equal-length samples, or ``None`` if undefined.
+
+    Undefined (returns ``None``) when there are fewer than two points or either
+    series has zero variance (a constant series has no correlation).
+    """
+    if len(xs) < 2:
+        return None
+    try:
+        return statistics.correlation(xs, ys)
+    except statistics.StatisticsError:
+        return None
+
+
+def correlation_matrix(
+    series_by_key: dict[str, list[tuple[int, float]]], *, min_points: int = 3
+) -> CorrelationMatrix:
+    """Pairwise Pearson correlation of per-step returns across positions.
+
+    Each input series is ``(timestamp, value)`` oldest-or-any order. Series are
+    aligned on the timestamps common to ALL of them, sorted ascending, then
+    differenced into per-step returns; correlations are computed on those return
+    vectors. The diagonal is ``1.0``. An off-diagonal entry is ``None`` when the
+    shared return sample has fewer than ``min_points`` points or either side has
+    zero variance. Label order follows ``series_by_key`` insertion order.
+    """
+    labels = list(series_by_key)
+    n = len(labels)
+    # Timestamps shared across every series.
+    common: set[int] | None = None
+    maps: dict[str, dict[int, float]] = {}
+    for key in labels:
+        ts_to_val = {ts: val for ts, val in series_by_key[key]}
+        maps[key] = ts_to_val
+        keys_set = set(ts_to_val)
+        common = keys_set if common is None else (common & keys_set)
+    shared_ts = sorted(common) if common else []
+    # Per-step returns on the shared grid.
+    returns: dict[str, list[float]] = {}
+    for key in labels:
+        vals = [maps[key][ts] for ts in shared_ts]
+        returns[key] = [b - a for a, b in zip(vals, vals[1:])]
+    overlap = len(shared_ts) - 1 if len(shared_ts) >= 1 else 0
+
+    matrix: list[list[float | None]] = [[None] * n for _ in range(n)]
+    for i in range(n):
+        matrix[i][i] = 1.0
+        for j in range(i + 1, n):
+            ri, rj = returns[labels[i]], returns[labels[j]]
+            corr = _pearson(ri, rj) if len(ri) >= min_points else None
+            matrix[i][j] = corr
+            matrix[j][i] = corr
+    return CorrelationMatrix(labels=labels, matrix=matrix, overlap=overlap)
+
+
+def high_correlation_pairs(
+    result: CorrelationMatrix, threshold: float
+) -> list[tuple[str, str, float]]:
+    """Upper-triangle pairs with ``abs(corr) >= threshold``, strongest first.
+
+    Returns ``(label_i, label_j, corr)`` tuples sorted by descending magnitude.
+    ``None`` (undefined) correlations are skipped.
+    """
+    pairs: list[tuple[str, str, float]] = []
+    labels, matrix = result.labels, result.matrix
+    for i in range(len(labels)):
+        for j in range(i + 1, len(labels)):
+            corr = matrix[i][j]
+            if corr is not None and abs(corr) >= threshold:
+                pairs.append((labels[i], labels[j], corr))
+    pairs.sort(key=lambda p: abs(p[2]), reverse=True)
+    return pairs
 
 
 def realized_volatility(prices: list[float], dt_minutes: float) -> float | None:
