@@ -57,6 +57,11 @@ _UNC_SIMS_PER = 400
 # sweep, so this bounds the worst-case scan time).
 _SCAN_MAX_MATCHES = 40
 
+# Max model-vs-market disagreement (probability units) tolerated on the
+# recommended side before we treat the "edge" as an orientation/staleness error
+# rather than a real opportunity and refuse to prime an order.
+_ORIENTATION_SANITY_GAP = 0.5
+
 
 def _percentile(values: Sequence[float], pct: float) -> float:
     """Linear-interpolated percentile of ``values`` (``pct`` in 0-100)."""
@@ -104,6 +109,25 @@ def _guess_yes_player(market: dict, p1_name: str, p2_name: str) -> int:
     if p2_name.lower() in text and p1_name.lower() not in text:
         return 2
     return 1
+
+
+def _orient_yes_player(market: dict, p1_name: str, p2_name: str) -> int:
+    """Which player (1/2) the market's YES side backs, derived authoritatively.
+
+    Kalshi sets ``yes_sub_title`` to the YES outcome's name, so an exact match to
+    a player name is decisive; we only fall back to the fuzzy name scan when that
+    is unavailable. Getting this right matters: the model's win prob must be
+    paired with the matching market side, otherwise a flipped orientation pairs a
+    ~certain win prob with the *other* outcome's cheap price and fabricates a huge
+    (bogus) edge.
+    """
+    sub = (market.get("yes_sub_title") or "").strip().lower()
+    if sub:
+        if sub == (p1_name or "").strip().lower():
+            return 1
+        if sub == (p2_name or "").strip().lower():
+            return 2
+    return _guess_yes_player(market, p1_name, p2_name)
 
 
 def _apply_pending_ability_seed() -> None:
@@ -201,7 +225,7 @@ def _render_odds_seeding(
     if prob is None:
         st.caption("Selected market has no usable price yet.")
         return
-    yes_player = _guess_yes_player(market, p1_name, p2_name)
+    yes_player = _orient_yes_player(market, p1_name, p2_name)
     market_p1 = prob if yes_player == 1 else 1.0 - prob
     spread_pts = int(round(DEFAULT_ABILITY_SPREAD * 100))
     st.caption(
@@ -559,7 +583,8 @@ def _scan_live_opportunities(
 
         market = info["p1_market"]
         baselines = info["baselines"]
-        if not market or baselines is None or _market_implied_prob(market) is None:
+        market_prob = _market_implied_prob(market) if market else None
+        if not market or baselines is None or market_prob is None:
             no_price += 1
             if progress:
                 progress.progress((i + 1) / len(groups), text="Scanning live tennis…")
@@ -589,12 +614,21 @@ def _scan_live_opportunities(
         names = info["names"]
         p1_name = names[0] if names else "Player 1"
         p2_name = names[1] if len(names) > 1 else "Player 2"
-        yes_player = _guess_yes_player(market, p1_name, p2_name)
+        yes_player = _orient_yes_player(market, p1_name, p2_name)
         edge = _evaluate_edge(
             market, p1_name, p2_name, result.p1_win_prob, dist, yes_player,
             fee_model, settings,
         )
-        if edge is not None and edge.naive_edge * 100.0 >= min_edge_pts:
+        # Drop implausibly large model-vs-market gaps (orientation/staleness), the
+        # same sanity guard the detail view applies before priming an order.
+        market_side_prob = (
+            market_prob if edge and edge.side == "yes" else 1.0 - market_prob
+        )
+        if (
+            edge is not None
+            and edge.naive_edge * 100.0 >= min_edge_pts
+            and abs(edge.side_mean - market_side_prob) <= _ORIENTATION_SANITY_GAP
+        ):
             opportunities.append(
                 {
                     "label": label,
@@ -948,7 +982,12 @@ def _render_sizing(
         st.warning("That market has no usable price yet.")
         return
 
-    guess = _guess_yes_player(market, p1_name, p2_name)
+    # Reset the YES-orientation default whenever the market changes so a stale
+    # choice from a previous match can't invert the new market's pricing.
+    if st.session_state.get("tn_yes_player_ticker") != ticker:
+        st.session_state.pop("tn_yes_player", None)
+        st.session_state["tn_yes_player_ticker"] = ticker
+    guess = _orient_yes_player(market, p1_name, p2_name)
     yes_player = st.radio(
         "YES on this market means a win for",
         [1, 2],
@@ -1036,6 +1075,23 @@ def _render_sizing(
     rec[3].metric("Actual stake", f"${edge.actual_stake:,.2f}")
     if edge.contracts == 0:
         st.warning("Bankroll is too small to buy a single contract at this price.")
+
+    # Sanity guard: in a live match-winner, model and market should broadly agree
+    # on who is winning. A huge gap on the recommended side almost always means
+    # the YES/NO orientation is wrong (so a ~certain win prob is being paired with
+    # the cheap *other* outcome) or the market is stale. Refuse to prime an order.
+    market_side_prob = market_prob if edge.side == "yes" else 1.0 - market_prob
+    if abs(edge.side_mean - market_side_prob) > _ORIENTATION_SANITY_GAP:
+        st.error(
+            f"Model ({edge.side_mean * 100:.0f}%) and market "
+            f"({market_side_prob * 100:.0f}%) disagree by "
+            f"{abs(edge.side_mean - market_side_prob) * 100:.0f} points on the "
+            f"recommended {edge.side.upper()} side. That gap is too large to be a "
+            "real live edge - the YES/NO orientation is probably wrong (check the "
+            "\"YES on this market means a win for\" selection) or the market is "
+            "stale. Not priming an order."
+        )
+        return
 
     st.divider()
     render_order_ticket(

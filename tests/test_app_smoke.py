@@ -173,12 +173,11 @@ def _button(at, key):
     raise AssertionError(f"button {key!r} not found")
 
 
-@pytest.fixture
-def live_tennis(monkeypatch, patch_data):
-    """Patch the data seam to expose one live tennis match, mispriced for an edge.
+def _install_live_tennis(monkeypatch, *, yes_ask: str, no_ask: str):
+    """Install one live tennis match (Alcaraz a set + 5-0 up -> model ~100%).
 
-    The market implies ~even (50c) but the live score has Player 1 a set and 5-0
-    up, so the model is far above the price -> a clear YES edge to scan/find.
+    ``yes_ask``/``no_ask`` set the Alcaraz (P1) market price so a test can make
+    the edge sane (e.g. 0.70) or implausibly stale (e.g. 0.03). Returns mk_a.
     """
     import datetime as dt
 
@@ -199,8 +198,8 @@ def live_tennis(monkeypatch, patch_data):
         "event_ticker": event_ticker,
         "series_ticker": "KXATPMATCH",
         "yes_sub_title": "Alcaraz",
-        "yes_ask_dollars": "0.50",
-        "no_ask_dollars": "0.50",
+        "yes_ask_dollars": yes_ask,
+        "no_ask_dollars": no_ask,
         "custom_strike": {"tennis_competitor": "cid-alc"},
     }
     mk_b = {
@@ -208,8 +207,8 @@ def live_tennis(monkeypatch, patch_data):
         "event_ticker": event_ticker,
         "series_ticker": "KXATPMATCH",
         "yes_sub_title": "Sinner",
-        "yes_ask_dollars": "0.50",
-        "no_ask_dollars": "0.50",
+        "yes_ask_dollars": no_ask,
+        "no_ask_dollars": yes_ask,
         "custom_strike": {"tennis_competitor": "cid-sin"},
     }
     details = {
@@ -243,6 +242,23 @@ def live_tennis(monkeypatch, patch_data):
     return mk_a
 
 
+@pytest.fixture
+def live_tennis(monkeypatch, patch_data):
+    """One live match priced 70c for Alcaraz vs a ~100% model: a real, sane edge."""
+    return _install_live_tennis(monkeypatch, yes_ask="0.70", no_ask="0.30")
+
+
+@pytest.fixture
+def live_tennis_stale(monkeypatch, patch_data):
+    """One live match priced 3c for Alcaraz despite a ~100% model.
+
+    Correct orientation (YES = Alcaraz), but the price is so far from the model
+    (a ~97pt gap) that it is almost certainly a stale/garbage quote, not alpha -
+    the scan must NOT list it and the detail view must flag it.
+    """
+    return _install_live_tennis(monkeypatch, yes_ask="0.03", no_ask="0.97")
+
+
 def test_tennis_scan_finds_edge_and_opens(live_tennis):
     at = AppTest.from_file(TENNIS)
     at.run()
@@ -260,6 +276,45 @@ def test_tennis_scan_finds_edge_and_opens(live_tennis):
     at.run()
     assert not at.exception
     assert any("Half-Kelly sizing" in str(m.value) for m in at.markdown)
+
+
+def test_tennis_scan_drops_implausible_edge(live_tennis_stale):
+    # Correct orientation, but the 3c price vs a ~100% model is a ~97pt gap:
+    # almost certainly a stale/garbage quote, so the scan must not list it.
+    at = AppTest.from_file(TENNIS)
+    at.run()
+    _button(at, "tn_scan").click()
+    at.run()
+    assert not at.exception
+    # The match was scanned (and had a usable price) but produced no edge row.
+    assert any(
+        "1 live match(es)" in str(c.value) and "0 with an edge" in str(c.value)
+        for c in at.caption
+    )
+    assert any(
+        "No live match currently shows a positive" in str(m.value) for m in at.info
+    )
+    frames = "".join(str(df.value) for df in at.dataframe)
+    assert "Alcaraz" not in frames
+
+
+def test_tennis_sizing_flags_inverted_orientation(live_tennis):
+    at = AppTest.from_file(TENNIS)
+    at.run()
+    _button(at, "tn_scan").click()
+    at.run()
+    _button(at, "tn_open").click()
+    at.run()
+    assert not at.exception
+    # Flip the YES orientation to the wrong player: now a ~certain win prob is
+    # paired with the other outcome's price, which the guard must catch.
+    radio = next(r for r in at.radio if r.key == "tn_yes_player")
+    radio.set_value(2)
+    at.run()
+    assert not at.exception
+    assert any("orientation is probably wrong" in str(e.value) for e in at.error)
+    # No order ticket is primed on a flagged (likely-inverted) setup.
+    assert not any("Place a limit order" in str(m.value) for m in at.markdown)
 
 
 def test_tennis_scan_no_live_matches(patch_data):
