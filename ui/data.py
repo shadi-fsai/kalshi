@@ -59,6 +59,12 @@ def build_client() -> tuple[KalshiClient | None, bool, str | None]:
         return None, False, f"Failed to load credentials: {exc}"
 
 
+@st.cache_data(show_spinner=False, ttl=30)
+def fetch_market(_client: KalshiClient, ticker: str) -> dict[str, Any]:
+    """Fetch a single market by ticker (short TTL for live pricing)."""
+    return _client.get_market(ticker).get("market", {})
+
+
 @st.cache_data(show_spinner=False, ttl=60)
 def fetch_markets_for_event_tickers(
     _client: KalshiClient, tickers: tuple[str, ...]
@@ -339,6 +345,7 @@ __all__ = [
     "KalshiAPIError",
     "build_client",
     "get_client",
+    "fetch_market",
     "fetch_markets_for_event_tickers",
     "fetch_live_markets",
     "fetch_resolution_index",

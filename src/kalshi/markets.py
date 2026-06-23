@@ -229,6 +229,46 @@ def classify_timing(
     return ("later", start.astimezone().strftime("%b %d %H:%M"))
 
 
+def live_sport_groups(
+    events: list[dict[str, Any]],
+    comp_to_sport: dict[str, str],
+    timing_index: dict[str, dict[str, Any]],
+    now: datetime.datetime,
+    *,
+    sport: str,
+    states: tuple[str, ...] = ("live",),
+) -> list[dict[str, Any]]:
+    """Game groups for one ``sport`` whose timing state is in ``states``.
+
+    Filters ``events`` to those whose competition maps to ``sport`` (via
+    ``comp_to_sport``), groups siblings with :func:`build_game_groups`, keeps only
+    head-to-head groups (``has_game``), and classifies each group's timing from
+    ``timing_index`` (trying the representative ticker, then siblings). Each
+    returned group is augmented with a ``timing_label`` for display. Groups are
+    ordered by start time (soonest/most-recently-started first).
+    """
+    sport_events = [
+        e for e in events if comp_to_sport.get(event_competition(e)) == sport
+    ]
+    groups = build_game_groups(sport_events)
+    out: list[tuple[datetime.datetime, dict[str, Any]]] = []
+    for group in groups:
+        if not group.get("has_game"):
+            continue
+        info: dict[str, Any] | None = None
+        for ticker in (group["rep_ticker"], *group["event_tickers"]):
+            if ticker in timing_index:
+                info = timing_index[ticker]
+                break
+        timing = classify_timing(info, now)
+        if not timing or timing[0] not in states:
+            continue
+        start = (info or {}).get("start") or now
+        out.append((start, {**group, "timing_label": timing[1]}))
+    out.sort(key=lambda pair: pair[0])
+    return [group for _, group in out]
+
+
 def classify_resolution(
     resolve_at: datetime.datetime | None, now: datetime.datetime
 ) -> tuple[str, str] | None:
@@ -274,6 +314,107 @@ def live_scores(details: dict[str, Any]) -> tuple[float, float] | None:
         if isinstance(home, (int, float)) and isinstance(away, (int, float)):
             return float(home), float(away)
     return None
+
+
+def _ongoing_games(round_scores: Any) -> int | None:
+    """Current (in-progress) game count from a competitor's round_scores list.
+
+    Kalshi's tennis ``competitorN_round_scores`` is a per-set list of
+    ``{"outcome": "winner"|"loser"|"ongoing", "score": games}``; the ``ongoing``
+    entry holds the games in the set currently being played.
+    """
+    if not isinstance(round_scores, list):
+        return None
+    for entry in round_scores:
+        if isinstance(entry, dict) and entry.get("outcome") == "ongoing":
+            score = entry.get("score")
+            if isinstance(score, (int, float)):
+                return int(score)
+    return None
+
+
+def tennis_live_score(
+    details: dict[str, Any],
+    p1_competitor_id: str | None = None,
+    p2_competitor_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Parse ``tennis_tournament_singles`` live data into a P1/P2 score.
+
+    Kalshi's tennis live data is competitor-indexed: ``competitor1_*`` /
+    ``competitor2_*`` fields, with ``server`` / ``winner`` / ``advantage`` given
+    as competitor ids. When the P1/P2 competitor ids are supplied (from each
+    winner market's ``custom_strike.tennis_competitor``) the result is oriented
+    to P1/P2 exactly; otherwise competitor1 is assumed to be P1 and ``oriented``
+    is ``False``.
+
+    Returns a dict with ``sets`` / ``games`` / ``points`` as ``(p1, p2)`` tuples
+    (``points`` are the raw 0/15/30/40 game score, or tiebreak counts when
+    ``in_tiebreak``), plus ``in_tiebreak`` (bool), ``advantage`` / ``server`` /
+    ``winner`` (1, 2, or None), and ``oriented`` (bool). Returns ``None`` when the
+    details are not a recognizable tennis match.
+    """
+    c1 = details.get("competitor1_id")
+    c2 = details.get("competitor2_id")
+    if not c1 or not c2:
+        return None
+
+    # competitor1 -> P1 unless the supplied ids say otherwise.
+    if (
+        p1_competitor_id
+        and p2_competitor_id
+        and {p1_competitor_id, p2_competitor_id} == {c1, c2}
+    ):
+        p1_is_c1 = p1_competitor_id == c1
+        oriented = True
+    else:
+        p1_is_c1 = True
+        oriented = False
+
+    def _int(value: Any) -> int | None:
+        return int(value) if isinstance(value, (int, float)) else None
+
+    s1 = _int(details.get("competitor1_overall_score"))
+    s2 = _int(details.get("competitor2_overall_score"))
+    g1 = _ongoing_games(details.get("competitor1_round_scores"))
+    g2 = _ongoing_games(details.get("competitor2_round_scores"))
+    pt1 = _int(details.get("competitor1_current_round_score"))
+    pt2 = _int(details.get("competitor2_current_round_score"))
+
+    def _comp_index(value: Any) -> int | None:
+        if value == c1:
+            return 1
+        if value == c2:
+            return 2
+        return None
+
+    server_c = _comp_index(details.get("server"))
+    winner_c = _comp_index(details.get("winner"))
+    adv_c = _comp_index(details.get("advantage"))
+
+    in_tiebreak = g1 == 6 and g2 == 6
+
+    def to_player(comp_idx: int | None) -> int | None:
+        if comp_idx is None:
+            return None
+        if p1_is_c1:
+            return comp_idx
+        return 1 if comp_idx == 2 else 2
+
+    def pair(v1: int | None, v2: int | None) -> tuple[int, int] | None:
+        if v1 is None or v2 is None:
+            return None
+        return (v1, v2) if p1_is_c1 else (v2, v1)
+
+    return {
+        "sets": pair(s1, s2),
+        "games": pair(g1, g2),
+        "points": pair(pt1, pt2),
+        "in_tiebreak": in_tiebreak,
+        "advantage": to_player(adv_c),
+        "server": to_player(server_c),
+        "winner": to_player(winner_c),
+        "oriented": oriented,
+    }
 
 
 def evaluate_in_money(

@@ -228,9 +228,15 @@ class KalshiClient:
         """Get live data (current score, status, scoring events) for a milestone.
 
         Returns ``{"live_data": {"type", "details", "milestone_id"}}`` where
-        ``details`` is a sport-specific object (for soccer it includes
+        ``details`` is a sport-specific object. Soccer includes
         ``home_same_game_score`` / ``away_same_game_score``, ``status``,
-        ``status_text``, and scoring/card events). See
+        ``status_text``, and scoring/card events. Tennis (``type`` ==
+        ``tennis_tournament_singles``) is competitor-indexed: per-competitor
+        ``*_overall_score`` (sets), ``*_round_scores`` (per-set games, with the
+        ``"ongoing"`` entry the current set), ``*_current_round_score`` (current
+        game points 0/15/30/40), plus ``server`` / ``winner`` / ``advantage`` as
+        competitor ids (see ``markets.tennis_live_score``). The structured
+        play-by-play ``game_stats`` endpoint does NOT support tennis. See
         https://docs.kalshi.com/api-reference/live-data/get-live-data
         """
         return self._request("GET", f"/live_data/milestone/{milestone_id}")

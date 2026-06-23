@@ -68,6 +68,46 @@ edge. It computes the Kelly-optimal stake and the number of contracts to buy.
   and (b) shrink the stake on top of Kelly when a lot of time remains and the
   market is volatile (the outcome is still uncertain). Toggle and sensitivity
   live in the sidebar. See "Volatility and time" below.
+- Tennis match pricing (**Tennis match pricing** page): the page leads with a
+  live-edge scanner. Click "Scan live tennis for edges" and it prices every
+  tennis match in play on Kalshi (up to a cap), then lists, ranked, the ones
+  where a bet has a positive half-Kelly edge - evaluating BOTH the YES and NO
+  side of each match-winner market. For each match the scan pulls the player
+  names, match-winner ticker, pre-game odds (inverted to seed abilities, see
+  below), and the full live score, builds the model, runs the Monte Carlo plus
+  the ability-uncertainty sweep, and compares the model's fair value to the
+  market. The opportunities table shows the match, the recommended side
+  (YES/NO + player), the MC fair price vs the market ask, the edge, and the
+  half-Kelly stake; a "minimum edge" filter and a "show all live matches"
+  toggle let you tune what is listed. Selecting a match and clicking "Open
+  match" loads the full detailed view: player names and the match-winner
+  ticker, the pre-game odds (inverted to seed abilities), and the full live
+  score - sets, current games, current points (game or tiebreak), and who is
+  serving - read from Kalshi's `tennis_tournament_singles` live data and
+  oriented to the right player via each winner market's competitor id (the
+  score stays editable, and a note flags what was auto-filled). It then
+  auto-runs the Monte Carlo, outputs the model's match-win probability with a
+  95% CI and the set-score distribution, and re-prices/sizes the bet. You can
+  also skip the scanner and enter a score manually. The sizing section prices
+  the bet off the simulation: it picks the side (YES/NO) with positive edge vs
+  the market, shows the MC fair price vs the market ask, and sizes it at the
+  sidebar's fractional-Kelly multiplier (half-Kelly by default) using the
+  account bankroll and the market's real Kalshi fee model, then offers the
+  standard two-step order ticket to place it. The stake also incorporates the
+  *range* of Monte Carlo outcomes: the "Ability uncertainty (+/- points)" slider
+  resamples each offense/defense input across many scenarios to build a
+  win-probability distribution (shown as a histogram). Because expected
+  log-growth on a one-shot binary bet depends only on the mean (so parameter
+  uncertainty would cancel), the bet is sized with a mean-variance Kelly that
+  shrinks the fraction by the variance of that distribution - a wider range
+  means a smaller bet, and the page reports the resulting shrink. "Seed abilities from pre-game
+  odds" takes the selected market's implied win probability, inverts an analytic
+  best-of-3 model to a per-player baseline point-win probability, and fills
+  offense = baseline + 12 points and defense = baseline - 12 points (you can
+  fine-tune afterward). Model assumptions: a server's point-win probability
+  combines offense and the returner's defense via a normalized-odds
+  (Bradley-Terry) rule; ad scoring with 7-point tiebreaks in every set;
+  cross-set serve continuity is simplified for v1.
 - Bankroll from manual input or pulled from your account balance.
 - Errors from the API/auth are surfaced in the UI (never silently swallowed).
 
@@ -169,17 +209,20 @@ app.py                 Entrypoint: st.navigation router + shared sidebar
 app_pages/find.py      Page: browse/search games (or enter a ticker) and size a bet
 app_pages/watch.py     Page: watch one live game (auto-refreshing score + opportunities)
 app_pages/portfolio.py Page: balance, positions, and resting orders
+app_pages/tennis.py    Page: tennis match Monte Carlo pricing vs the market
 ui/data.py             Streamlit-cached data fetchers + client construction seam
 ui/settings.py         Shared sidebar + Settings (bankroll, Kelly, volatility, fees)
 ui/sizer.py            Bet sizer (Kelly + Sharpe) and the order ticket
 ui/games.py            Game discovery (browse/filters/favorites) + manual ticker
-ui/portfolio.py        Portfolio view
+ui/portfolio.py        Portfolio view (incl. position correlation matrix)
+ui/tennis.py           Tennis pricing UI (inputs, simulation, market compare)
 src/kalshi/auth.py     RSA request signing + signed headers
 src/kalshi/client.py   REST client (events, markets, orderbook, candlesticks, balance)
 src/kalshi/kelly.py    Pure Kelly math
 src/kalshi/markets.py  Pure market/event/timing/ITM helpers
 src/kalshi/fees.py     Kalshi fee-model math
 src/kalshi/orders.py   Buy/sell + YES/NO -> YES-book order translation
-src/kalshi/risk.py     Realized volatility + Sharpe metrics + vol/time shrink
+src/kalshi/risk.py     Realized volatility + Sharpe metrics + correlation matrix
+src/kalshi/tennis.py   Tennis scoring model + Monte Carlo match pricing
 tests/                 Unit tests (see TESTING.md)
 ```

@@ -13,6 +13,7 @@ from freezegun import freeze_time
 from kalshi.markets import (
     classify_resolution,
     classify_timing,
+    live_sport_groups,
     parse_ts,
     resolution_time,
 )
@@ -153,3 +154,63 @@ def test_classify_resolution_later():
 def test_classify_resolution_later_far_future():
     state, _label = classify_resolution(_at(48 * 60), _now())
     assert state == "later"
+
+
+# --- live_sport_groups ---------------------------------------------------
+
+
+def _tennis_event(code: str, title: str) -> dict:
+    return {
+        "event_ticker": f"KXATPMATCH-{code}",
+        "series_ticker": "KXATPMATCH",
+        "title": title,
+        "sub_title": "Winner",
+        "product_metadata": {"competition": "ATP", "competition_scope": "Game"},
+    }
+
+
+@freeze_time(NOW_ISO)
+def test_live_sport_groups_filters_to_live_tennis():
+    live = _tennis_event("ALCSIN", "Alcaraz vs Sinner")
+    soon = _tennis_event("DJONAD", "Djokovic vs Nadal")
+    soccer = {
+        "event_ticker": "KXWCGAME-26JUN20NEDSWE",
+        "title": "Netherlands vs Sweden",
+        "product_metadata": {"competition": "World Soccer Cup", "competition_scope": "Game"},
+    }
+    comp_to_sport = {"ATP": "Tennis", "World Soccer Cup": "Soccer"}
+    timing_index = {
+        "KXATPMATCH-ALCSIN": {"start": _at(-25), "status": "live"},
+        "KXATPMATCH-DJONAD": {"start": _at(40), "status": None},  # soon, excluded
+        "KXWCGAME-26JUN20NEDSWE": {"start": _at(-10), "status": "live"},
+    }
+    groups = live_sport_groups(
+        [live, soon, soccer], comp_to_sport, timing_index, _now(), sport="Tennis"
+    )
+    assert len(groups) == 1
+    assert groups[0]["matchup"] == "Alcaraz vs Sinner"
+    assert groups[0]["rep_ticker"] == "KXATPMATCH-ALCSIN"
+    assert "LIVE" in groups[0]["timing_label"]
+
+
+@freeze_time(NOW_ISO)
+def test_live_sport_groups_states_and_ordering():
+    a = _tennis_event("AAA", "A vs B")
+    b = _tennis_event("BBB", "C vs D")
+    comp_to_sport = {"ATP": "Tennis"}
+    timing_index = {
+        "KXATPMATCH-AAA": {"start": _at(50), "status": None},  # soon
+        "KXATPMATCH-BBB": {"start": _at(20), "status": None},  # soon, sooner start
+    }
+    # Default states=("live",) -> nothing matches here.
+    assert live_sport_groups([a, b], comp_to_sport, timing_index, _now(), sport="Tennis") == []
+    # Including "soon" returns both, ordered by start time (BBB before AAA).
+    groups = live_sport_groups(
+        [a, b], comp_to_sport, timing_index, _now(), sport="Tennis", states=("live", "soon")
+    )
+    assert [g["rep_ticker"] for g in groups] == ["KXATPMATCH-BBB", "KXATPMATCH-AAA"]
+
+
+@freeze_time(NOW_ISO)
+def test_live_sport_groups_empty_when_no_tennis():
+    assert live_sport_groups([], {}, {}, _now(), sport="Tennis") == []

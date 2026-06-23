@@ -4,7 +4,125 @@ import math
 
 import pytest
 
-from kalshi.kelly import kelly_for_contract
+from kalshi.kelly import (
+    better_side,
+    certainty_equivalent_probability,
+    kelly_for_contract,
+    uncertainty_adjusted_kelly_fraction,
+)
+
+
+def test_uncertainty_kelly_equals_point_kelly_for_single_prob():
+    # A degenerate one-value "distribution" (var=0) reproduces full Kelly.
+    f = uncertainty_adjusted_kelly_fraction(
+        [0.70], price_cents=50, fee_buy=0.0, fee_sell=0.0
+    )
+    point = kelly_for_contract(
+        side="yes", price_cents=50, estimated_probability=0.70,
+        bankroll=1000.0, fee_buy=0.0, fee_sell=0.0,
+    )
+    assert f == pytest.approx(point.full_kelly_fraction)
+
+
+def test_uncertainty_kelly_shrinks_with_spread_at_equal_mean():
+    # Same mean (0.70) but wider spread -> smaller fraction.
+    tight = uncertainty_adjusted_kelly_fraction([0.70], price_cents=50, fee_buy=0.0)
+    wide = uncertainty_adjusted_kelly_fraction(
+        [0.60, 0.70, 0.80], price_cents=50, fee_buy=0.0
+    )
+    assert wide < tight
+    wider = uncertainty_adjusted_kelly_fraction(
+        [0.50, 0.70, 0.90], price_cents=50, fee_buy=0.0
+    )
+    assert wider < wide
+
+
+def test_uncertainty_kelly_risk_aversion_zero_ignores_spread():
+    f = uncertainty_adjusted_kelly_fraction(
+        [0.50, 0.70, 0.90], price_cents=50, fee_buy=0.0, risk_aversion=0.0
+    )
+    point = uncertainty_adjusted_kelly_fraction([0.70], price_cents=50, fee_buy=0.0)
+    assert f == pytest.approx(point)
+
+
+def test_uncertainty_kelly_zero_when_no_edge_on_mean():
+    assert (
+        uncertainty_adjusted_kelly_fraction([0.30, 0.40], price_cents=50, fee_buy=0.0)
+        == 0.0
+    )
+
+
+def test_uncertainty_kelly_zero_when_fees_swallow_spread():
+    assert (
+        uncertainty_adjusted_kelly_fraction([0.99], price_cents=99, fee_buy=0.02) == 0.0
+    )
+
+
+def test_uncertainty_kelly_empty_is_zero():
+    assert uncertainty_adjusted_kelly_fraction([], price_cents=50) == 0.0
+
+
+def test_uncertainty_kelly_certain_win_returns_full():
+    # mean_p == 1 -> Bernoulli variance 0 -> no shrink, full fraction.
+    assert uncertainty_adjusted_kelly_fraction([1.0], price_cents=50, fee_buy=0.0) == 1.0
+
+
+def test_certainty_equivalent_breakeven_when_fees_swallow_spread():
+    p_eff = certainty_equivalent_probability(0.5, price_cents=99, fee_buy=0.02)
+    assert p_eff == pytest.approx(1.0)
+
+
+def test_certainty_equivalent_round_trips_fraction():
+    f = uncertainty_adjusted_kelly_fraction([0.72], price_cents=50, fee_buy=0.0)
+    p_eff = certainty_equivalent_probability(f, price_cents=50, fee_buy=0.0)
+    assert p_eff == pytest.approx(0.72, abs=1e-9)
+
+
+def test_certainty_equivalent_zero_fraction_is_breakeven():
+    p_eff = certainty_equivalent_probability(0.0, price_cents=60, fee_buy=0.01)
+    assert p_eff == pytest.approx(0.61)
+
+
+def _kelly(side, price_cents, est):
+    return kelly_for_contract(
+        side=side,
+        price_cents=price_cents,
+        estimated_probability=est,
+        bankroll=1000.0,
+        kelly_multiplier=0.5,
+        fee_buy=0.0,
+        fee_sell=0.0,
+    )
+
+
+def test_better_side_picks_yes_when_only_yes_has_edge():
+    yes = _kelly("yes", 50, 0.70)  # edge
+    no = _kelly("no", 50, 0.40)  # no edge
+    assert better_side(yes, no) is yes
+
+
+def test_better_side_picks_no_when_only_no_has_edge():
+    yes = _kelly("yes", 50, 0.40)
+    no = _kelly("no", 50, 0.70)
+    assert better_side(yes, no) is no
+
+
+def test_better_side_picks_larger_fraction_when_both_have_edge():
+    yes = _kelly("yes", 50, 0.60)
+    no = _kelly("no", 50, 0.80)  # bigger edge -> bigger fraction
+    assert better_side(yes, no) is no
+
+
+def test_better_side_none_when_neither_has_edge():
+    yes = _kelly("yes", 50, 0.45)
+    no = _kelly("no", 50, 0.45)
+    assert better_side(yes, no) is None
+
+
+def test_better_side_tie_resolves_to_yes():
+    yes = _kelly("yes", 50, 0.70)
+    no = _kelly("no", 50, 0.70)  # identical fraction
+    assert better_side(yes, no) is yes
 
 
 def test_no_edge_when_estimate_equals_price():

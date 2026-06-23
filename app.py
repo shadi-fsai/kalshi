@@ -10,6 +10,7 @@ Pages:
 - Find games & size: browse/search open games (or enter a ticker) and size a bet.
 - Watch a game live: monitor one game's score + opportunities, size on the fly.
 - Portfolio: balance, positions, and resting orders (with cancel).
+- Tennis match pricing: Monte Carlo a best-of-3 match vs the Kalshi market.
 """
 
 from __future__ import annotations
@@ -34,5 +35,6 @@ find_page = st.Page(
 )
 watch_page = st.Page("app_pages/watch.py", title="Watch a game live", icon="📺")
 portfolio_page = st.Page("app_pages/portfolio.py", title="Portfolio", icon="💼")
+tennis_page = st.Page("app_pages/tennis.py", title="Tennis match pricing", icon="🎾")
 
-st.navigation([find_page, watch_page, portfolio_page]).run()
+st.navigation([find_page, watch_page, portfolio_page, tennis_page]).run()

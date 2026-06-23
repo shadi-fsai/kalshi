@@ -16,6 +16,7 @@ from kalshi.markets import (
     matchup_name,
     price_cents_for_side,
     series_ticker_for_market,
+    tennis_live_score,
 )
 
 HOME = "home-1"
@@ -184,6 +185,85 @@ def test_live_scores_falls_back_to_aggregate():
 
 def test_live_scores_none_when_missing():
     assert live_scores({"status": "live"}) is None
+
+
+# --- tennis_live_score ---------------------------------------------------
+
+# A real-shaped tennis_tournament_singles live-data payload (Proietti vs
+# Trevisan): comp1 leads sets 1-1, current set comp1 0 games / comp2 2 games,
+# comp1 at 15 / comp2 at 0, comp2 serving.
+_TENNIS_DETAILS = {
+    "competitor1_id": "c1",
+    "competitor2_id": "c2",
+    "competitor1_overall_score": 1,
+    "competitor2_overall_score": 1,
+    "competitor1_round_scores": [
+        {"outcome": "loser", "score": 2},
+        {"outcome": "winner", "score": 6},
+        {"outcome": "ongoing", "score": 0},
+    ],
+    "competitor2_round_scores": [
+        {"outcome": "winner", "score": 6},
+        {"outcome": "loser", "score": 1},
+        {"outcome": "ongoing", "score": 2},
+    ],
+    "competitor1_current_round_score": 15,
+    "competitor2_current_round_score": 0,
+    "advantage": "",
+    "server": "c2",
+    "winner": "",
+}
+
+
+def test_tennis_live_score_oriented_by_competitor_id():
+    out = tennis_live_score(_TENNIS_DETAILS, "c1", "c2")
+    assert out["sets"] == (1, 1)
+    assert out["games"] == (0, 2)
+    assert out["points"] == (15, 0)
+    assert out["server"] == 2
+    assert out["winner"] is None
+    assert out["in_tiebreak"] is False
+    assert out["oriented"] is True
+
+
+def test_tennis_live_score_swaps_when_p1_is_competitor2():
+    out = tennis_live_score(_TENNIS_DETAILS, "c2", "c1")
+    assert out["sets"] == (1, 1)
+    assert out["games"] == (2, 0)  # P1 is now competitor2
+    assert out["points"] == (0, 15)
+    assert out["server"] == 1  # competitor2 (the server) is now P1
+    assert out["oriented"] is True
+
+
+def test_tennis_live_score_assumes_competitor1_when_ids_missing():
+    out = tennis_live_score(_TENNIS_DETAILS)
+    assert out["games"] == (0, 2)
+    assert out["oriented"] is False
+
+
+def test_tennis_live_score_tiebreak_and_advantage_and_winner():
+    details = {
+        "competitor1_id": "c1",
+        "competitor2_id": "c2",
+        "competitor1_overall_score": 1,
+        "competitor2_overall_score": 1,
+        "competitor1_round_scores": [{"outcome": "ongoing", "score": 6}],
+        "competitor2_round_scores": [{"outcome": "ongoing", "score": 6}],
+        "competitor1_current_round_score": 5,
+        "competitor2_current_round_score": 3,
+        "advantage": "c1",
+        "server": "c1",
+        "winner": "c2",
+    }
+    out = tennis_live_score(details, "c1", "c2")
+    assert out["in_tiebreak"] is True
+    assert out["points"] == (5, 3)
+    assert out["advantage"] == 1
+    assert out["winner"] == 2
+
+
+def test_tennis_live_score_none_when_not_tennis():
+    assert tennis_live_score({"status": "live"}) is None
 
 
 # --- evaluate_in_money ---------------------------------------------------

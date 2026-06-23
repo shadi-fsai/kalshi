@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIND = str(ROOT / "app_pages" / "find.py")
 WATCH = str(ROOT / "app_pages" / "watch.py")
 PORTFOLIO = str(ROOT / "app_pages" / "portfolio.py")
+TENNIS = str(ROOT / "app_pages" / "tennis.py")
 APP = str(ROOT / "app.py")
 
 
@@ -92,6 +93,7 @@ def patch_data(monkeypatch, market):
     )
     monkeypatch.setattr(data, "fetch_live_markets", lambda _c, t: markets_by_ticker)
     monkeypatch.setattr(data, "fetch_live_data", lambda _c, mid: None)
+    monkeypatch.setattr(data, "fetch_market", lambda _c, t: market)
     monkeypatch.setattr(data, "fetch_fee_model", lambda _c, s: None)
     monkeypatch.setattr(data, "fetch_mid_prices", lambda _c, *a: [])
     monkeypatch.setattr(data, "fetch_ask_price_series", lambda _c, *a, **k: [])
@@ -139,6 +141,135 @@ def test_portfolio_page(patch_data):
     at.run()
     assert not at.exception
     assert any("My portfolio" in str(h.value) for h in at.subheader)
+
+
+def test_tennis_page_sizes_from_model(patch_data, market):
+    at = AppTest.from_file(TENNIS)
+    # Seed a model result + the auto-filled ticker so the sizing section runs the
+    # full MC-priced half-Kelly path against the fake market (yes_sub "Netherlands").
+    at.session_state["tn_result"] = {
+        "p1_win_prob": 0.70,
+        "ci": 0.5,
+        "counts": {"2-0": 700, "0-2": 300},
+        "n": 1000,
+        "p1_name": "Netherlands",
+        "p2_name": "Sweden",
+        # A win-probability range from the ability sweep -> exercises the
+        # uncertainty-aware shrink and the distribution histogram.
+        "p1_win_dist": [0.55, 0.62, 0.68, 0.70, 0.72, 0.78, 0.85],
+        "ability_unc": 5.0,
+    }
+    at.session_state["tn_ticker"] = market["ticker"]
+    at.run()
+    assert not at.exception
+    assert any("Half-Kelly sizing" in str(m.value) for m in at.markdown)
+    assert any("Uncertainty shrink" in str(m.label) for m in at.metric)
+
+
+def _button(at, key):
+    for b in at.button:
+        if b.key == key:
+            return b
+    raise AssertionError(f"button {key!r} not found")
+
+
+@pytest.fixture
+def live_tennis(monkeypatch, patch_data):
+    """Patch the data seam to expose one live tennis match, mispriced for an edge.
+
+    The market implies ~even (50c) but the live score has Player 1 a set and 5-0
+    up, so the model is far above the price -> a clear YES edge to scan/find.
+    """
+    import datetime as dt
+
+    from ui import data
+
+    now = dt.datetime.now(dt.timezone.utc)
+    start = now - dt.timedelta(hours=1)
+    event_ticker = "KXATPMATCH-26JUN23ALCSIN"
+    tennis_event = {
+        "event_ticker": event_ticker,
+        "series_ticker": "KXATPMATCH",
+        "title": "Alcaraz vs Sinner",
+        "sub_title": "Who wins?",
+        "product_metadata": {"competition": "ATP", "competition_scope": "Game"},
+    }
+    mk_a = {
+        "ticker": "KXATPMATCH-26JUN23ALCSIN-ALC",
+        "event_ticker": event_ticker,
+        "series_ticker": "KXATPMATCH",
+        "yes_sub_title": "Alcaraz",
+        "yes_ask_dollars": "0.50",
+        "no_ask_dollars": "0.50",
+        "custom_strike": {"tennis_competitor": "cid-alc"},
+    }
+    mk_b = {
+        "ticker": "KXATPMATCH-26JUN23ALCSIN-SIN",
+        "event_ticker": event_ticker,
+        "series_ticker": "KXATPMATCH",
+        "yes_sub_title": "Sinner",
+        "yes_ask_dollars": "0.50",
+        "no_ask_dollars": "0.50",
+        "custom_strike": {"tennis_competitor": "cid-sin"},
+    }
+    details = {
+        "competitor1_id": "cid-alc",
+        "competitor2_id": "cid-sin",
+        "competitor1_overall_score": 1,
+        "competitor2_overall_score": 0,
+        "competitor1_round_scores": [
+            {"outcome": "winner", "score": 6},
+            {"outcome": "ongoing", "score": 5},
+        ],
+        "competitor2_round_scores": [
+            {"outcome": "loser", "score": 3},
+            {"outcome": "ongoing", "score": 0},
+        ],
+        "competitor1_current_round_score": 40,
+        "competitor2_current_round_score": 0,
+        "server": "cid-alc",
+    }
+    timing = {event_ticker: {"start": start, "status": "live", "milestone_id": "mil-1"}}
+
+    monkeypatch.setattr(data, "fetch_open_events", lambda _c, **k: [tennis_event])
+    monkeypatch.setattr(data, "fetch_sports_taxonomy", lambda _c: ([], {"ATP": "Tennis"}))
+    monkeypatch.setattr(data, "fetch_live_window_index", lambda _c: (timing, now))
+    monkeypatch.setattr(
+        data, "fetch_markets_for_event_tickers", lambda _c, t: {event_ticker: [mk_a, mk_b]}
+    )
+    monkeypatch.setattr(data, "fetch_live_data", lambda _c, mid: details)
+    monkeypatch.setattr(data, "fetch_market", lambda _c, t: mk_a)
+    monkeypatch.setattr(data, "fetch_fee_model", lambda _c, s: None)
+    return mk_a
+
+
+def test_tennis_scan_finds_edge_and_opens(live_tennis):
+    at = AppTest.from_file(TENNIS)
+    at.run()
+    assert not at.exception
+    # Run the scan.
+    _button(at, "tn_scan").click()
+    at.run()
+    assert not at.exception
+    # An opportunity table rendered with the YES (Player 1) edge.
+    frames = "".join(str(df.value) for df in at.dataframe)
+    assert "Alcaraz" in frames
+    assert "YES (Alcaraz)" in frames
+    # Open the (default-selected) match -> detailed half-Kelly sizing renders.
+    _button(at, "tn_open").click()
+    at.run()
+    assert not at.exception
+    assert any("Half-Kelly sizing" in str(m.value) for m in at.markdown)
+
+
+def test_tennis_scan_no_live_matches(patch_data):
+    # patch_data exposes no events, so a scan simply finds nothing (no crash).
+    at = AppTest.from_file(TENNIS)
+    at.run()
+    _button(at, "tn_scan").click()
+    at.run()
+    assert not at.exception
+    assert any("Scanned 0 live match" in str(c.value) for c in at.caption)
 
 
 def test_router_app_runs(patch_data):
