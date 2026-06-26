@@ -260,8 +260,8 @@ class KalshiClient:
 
         ``count_filter="position"`` restricts to markets where you hold a
         non-zero position. Returns ``market_positions`` (each with a signed
-        ``position_fp``: positive = YES contracts, negative = NO) and
-        ``event_positions``.
+        fixed-point ``position_fp`` contract count: positive = YES, negative =
+        NO, and possibly fractional, e.g. ``"0.20"``) and ``event_positions``.
         """
         params: dict[str, Any] = {"limit": limit}
         if count_filter:
@@ -295,7 +295,7 @@ class KalshiClient:
         *,
         ticker: str,
         book_side: str,
-        count: int,
+        count: float,
         price_dollars: float,
         client_order_id: str,
         outcome_side: str | None = None,
@@ -310,6 +310,11 @@ class KalshiClient:
         ``"bid"`` = buy YES, ``"ask"`` = sell YES (buying NO is selling YES at
         ``1 - price``). ``price_dollars`` is the YES-book price in dollars
         (e.g. 0.56). This places a REAL order on the configured environment.
+
+        ``count`` is a contract quantity. Kalshi uses fixed-point contracts, so
+        markets with fractional trading enabled accept sub-integer sizes (min
+        granularity 0.01); the quantity is sent as the fixed-point ``count_fp``
+        string (the legacy integer ``count`` field is deprecated).
 
         ``outcome_side`` (``"yes"``/``"no"``) is Kalshi's canonical directional
         field: it lets the Kalshi UI display a buy-NO order as "buy NO" rather
@@ -333,7 +338,7 @@ class KalshiClient:
         body: dict[str, Any] = {
             "ticker": ticker,
             "side": book_side,
-            "count": str(int(count)),
+            "count_fp": f"{float(count):.2f}",
             "price": f"{price_dollars:.4f}",
             "time_in_force": time_in_force,
             "self_trade_prevention_type": self_trade_prevention_type,

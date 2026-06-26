@@ -19,34 +19,40 @@ def base_url_for_env(env: str) -> str:
     return PROD_BASE_URL if env == "prod" else DEMO_BASE_URL
 
 
-def signed_position_contracts(market_position: dict) -> int:
-    """Signed whole contracts for a market position (>0 YES, <0 NO, 0 flat).
+def signed_position_contracts(market_position: dict) -> float:
+    """Signed contract count for a market position (>0 YES, <0 NO, 0 flat).
 
-    Prefers the integer ``position`` field; falls back to the fixed-point
-    ``position_fp`` (2-decimal) when only that is present.
+    Kalshi uses fixed-point contracts: ``position_fp`` is the signed contract
+    count as a decimal string (e.g. ``"0.20"`` = 0.2 YES contracts, ``"-4.00"``
+    = 4 NO), and markets may hold fractional sizes. We return it as a float so a
+    sub-integer position is never rounded away. The integer ``position`` field is
+    legacy and used only when ``position_fp`` is absent.
     """
-    if market_position.get("position") is not None:
-        return int(market_position["position"])
     fp = market_position.get("position_fp")
     if fp is None:
-        return 0
-    return round(float(fp) / 100.0)
+        fp = market_position.get("position")
+    if fp is None:
+        return 0.0
+    try:
+        return float(fp)
+    except (TypeError, ValueError):
+        return 0.0
 
 
-def held_contracts(client: KalshiClient, ticker: str, held_side: str) -> int:
+def held_contracts(client: KalshiClient, ticker: str, held_side: str) -> float:
     """Positive contract count held on ``held_side`` for ``ticker`` (0 if none).
 
-    Returns 0 when flat or when the held position is on the other side (so a YES
-    query against a NO holding returns 0, never a negative number).
+    May be fractional. Returns 0 when flat or when the held position is on the
+    other side (so a YES query against a NO holding returns 0, never negative).
     """
     resp = client.get_positions()
     for mp in resp.get("market_positions", []):
         if mp.get("ticker") == ticker or mp.get("market_ticker") == ticker:
             signed = signed_position_contracts(mp)
             if held_side == "yes":
-                return signed if signed > 0 else 0
-            return -signed if signed < 0 else 0
-    return 0
+                return signed if signed > 0 else 0.0
+            return -signed if signed < 0 else 0.0
+    return 0.0
 
 
 def rest_yes_prices(

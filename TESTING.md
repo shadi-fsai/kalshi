@@ -67,7 +67,7 @@ uv run pytest -p no:cov                    # skip coverage gate while iterating
 | `test_risk.py` | `kalshi.risk` | Realized-volatility / Sharpe metrics, the volatility stake shrink, candlestick series parsing, high-water marks, and the position correlation matrix. |
 | `test_tennis.py` | `kalshi.tennis` | Best-of-3 point model and seeded Monte Carlo match pricing. |
 | `test_stops.py` | `kalshi.stops` | `StopConfig` (de)serialization + validation, held-side trigger math (YES/NO), `exit_book_order` mapping, and `StopStore` CRUD / status / heartbeat with corrupt-file tolerance. |
-| `test_positions.py` | `kalshi.positions` | Env base-URL mapping, signed position parsing (`position` vs `position_fp`), held-side contract counts, and the REST price snapshot. |
+| `test_positions.py` | `kalshi.positions` | Env base-URL mapping, fixed-point signed position parsing (fractional `position_fp` contracts, legacy `position` fallback), held-side contract counts, and the REST price snapshot. |
 | `test_stop_engine.py` | `kalshi.stop_engine` | Trigger evaluation, `fire()` filled/partial/error/disarmed paths, client caching, `run_single` no-position, and config reconcile start/cancel. |
 | `test_ws.py` | `kalshi.ws` | WebSocket URL derivation (prod/demo/env override), dollar parsing, and `ticker` message parsing. |
 | `test_cli.py` | `kalshi.cli` | Console-script entry points: arg parsing, demo/dry-run defaults, the production-arming guard, and the failure exit code. |

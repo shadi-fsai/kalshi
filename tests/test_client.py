@@ -100,12 +100,31 @@ def test_create_order_body_and_content_type(client, requests_mock):
     assert body == {
         "ticker": "KXWCGAME-26JUN20NEDSWE-NED",
         "side": "bid",
-        "count": "10",
+        "count_fp": "10.00",
         "price": "0.5600",
         "time_in_force": "good_till_canceled",
         "self_trade_prevention_type": "taker_at_cross",
         "client_order_id": "cid-1",
     }
+
+
+def test_create_order_sends_fractional_count_fp(client, requests_mock):
+    requests_mock.post(
+        f"{DEFAULT_BASE_URL}/portfolio/events/orders",
+        json={"order": {"order_id": "Of"}},
+    )
+    client.create_order(
+        ticker="T",
+        book_side="ask",
+        count=0.2,
+        price_dollars=0.83,
+        client_order_id="cid-f",
+        reduce_only=True,
+    )
+    body = json.loads(requests_mock.last_request.body)
+    assert body["count_fp"] == "0.20"
+    assert "count" not in body
+    assert body["reduce_only"] is True
 
 
 def test_create_order_invalid_book_side_raises(client):

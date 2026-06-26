@@ -202,7 +202,7 @@ class StopEngine:
             message="watching",
         )
         log.info(
-            "[%s] watching: protect %d %s, stop@%.0fc ref=%s env=%s armed=%s",
+            "[%s] watching: protect %.2f %s, stop@%.0fc ref=%s env=%s armed=%s",
             cfg.ticker, count, cfg.held_side.upper(), cfg.stop_cents,
             cfg.trigger_ref, cfg.env, cfg.armed,
         )
@@ -240,7 +240,7 @@ class StopEngine:
         )
         return is_triggered(ref, cfg.stop_cents)
 
-    async def rest_fallback(self, cfg: StopConfig, client: KalshiClient, count: int) -> bool:
+    async def rest_fallback(self, cfg: StopConfig, client: KalshiClient, count: float) -> bool:
         log.warning("[%s] WS unavailable -- REST polling so the stop is not blind.", cfg.ticker)
         for _ in range(REST_FALLBACK_CYCLES):
             if self._stop.is_set():
@@ -257,12 +257,12 @@ class StopEngine:
             await asyncio.sleep(REST_FALLBACK_SECS)
         return False
 
-    async def fire(self, cfg: StopConfig, client: KalshiClient, count: int) -> None:
+    async def fire(self, cfg: StopConfig, client: KalshiClient, count: float) -> None:
         bo = exit_book_order(cfg)
         price = bo.yes_price_dollars
         banner(
             f"TRIGGER {cfg.ticker}: {cfg.held_side.upper()} ref <= {cfg.stop_cents:.0f}c. "
-            f"Closing {count} via {bo.book_side} YES @ {price:.2f} (IOC, reduce_only)."
+            f"Closing {count:.2f} via {bo.book_side} YES @ {price:.2f} (IOC, reduce_only)."
         )
 
         if not cfg.armed:
@@ -270,7 +270,7 @@ class StopEngine:
                 cfg.id,
                 state="triggered_disarmed",
                 fired_at=time.time(),
-                message=f"Triggered but DISARMED; would sell {count} {cfg.held_side.upper()} @ stop {cfg.stop_cents:.0f}c.",
+                message=f"Triggered but DISARMED; would sell {count:.2f} {cfg.held_side.upper()} @ stop {cfg.stop_cents:.0f}c.",
             )
             log.warning("[%s] triggered but DISARMED -- no order placed.", cfg.ticker)
             return
@@ -310,18 +310,18 @@ class StopEngine:
                 self.set_status(cfg.id, state="filled", remaining=0, order_ids=order_ids, message="flat -- protective close complete")
                 banner(f"FLAT {cfg.ticker}: protective close complete.")
                 return
-            self.set_status(cfg.id, state="closing", remaining=remaining, order_ids=order_ids, message=f"partial; {remaining} left")
-            log.warning("[%s] partial close: %d remaining after attempt %d.", cfg.ticker, remaining, attempt)
+            self.set_status(cfg.id, state="closing", remaining=remaining, order_ids=order_ids, message=f"partial; {remaining:.2f} left")
+            log.warning("[%s] partial close: %.2f remaining after attempt %d.", cfg.ticker, remaining, attempt)
 
         self.set_status(
             cfg.id,
             state="partial_failed",
             remaining=remaining,
             order_ids=order_ids,
-            message=f"STOP DID NOT FULLY FILL: {remaining} left after {MAX_FILL_RETRIES} attempts. MANUAL ACTION REQUIRED.",
+            message=f"STOP DID NOT FULLY FILL: {remaining:.2f} left after {MAX_FILL_RETRIES} attempts. MANUAL ACTION REQUIRED.",
         )
         banner(
-            f"!!! STOP DID NOT FULLY FILL !!! {cfg.ticker} has {remaining} left after "
+            f"!!! STOP DID NOT FULLY FILL !!! {cfg.ticker} has {remaining:.2f} left after "
             f"{MAX_FILL_RETRIES} attempts at <= {price:.2f}. MANUAL ACTION REQUIRED."
         )
 

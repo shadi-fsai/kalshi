@@ -58,14 +58,15 @@ class StopConfig:
     ``stop_cents`` is the level on the HELD side: a NO holding with
     ``stop_cents=85`` stops out when the NO price falls to <= 85c (equivalently
     YES rises to >= 15c). ``count=None`` means "use whatever is held" (resolved
-    by the engine at fire time). ``trigger_ref`` chooses which held-side price to
+    by the engine at fire time); a numeric ``count`` may be fractional because
+    Kalshi supports fixed-point contracts. ``trigger_ref`` chooses which held-side price to
     compare ("bid" = the price you could sell at right now, the safe default).
     """
 
     ticker: str
     held_side: str  # "yes" | "no"
     stop_cents: float
-    count: int | None = None
+    count: float | None = None  # contracts (may be fractional); None = full position
     slippage_cents: float = 2.0
     trigger_ref: str = "bid"
     env: str = "prod"

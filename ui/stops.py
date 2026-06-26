@@ -37,7 +37,11 @@ def _store() -> StopStore:
 
 
 def _held_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return [{ticker, side, count}] for non-zero positions."""
+    """Return [{ticker, side, count}] for non-zero positions.
+
+    ``count`` is the contract size and may be fractional (Kalshi fixed-point
+    contracts, e.g. 0.20), so we keep it as a float instead of truncating it.
+    """
     out: list[dict[str, Any]] = []
     for p in positions:
         qty = fp_to_float(p.get("position_fp"))
@@ -47,7 +51,7 @@ def _held_positions(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             {
                 "ticker": p.get("ticker", ""),
                 "side": "yes" if qty > 0 else "no",
-                "count": int(abs(qty)),
+                "count": round(abs(qty), 2),
             }
         )
     return out
@@ -104,7 +108,7 @@ def _live_status(store: StopStore, client: KalshiClient) -> None:
             {
                 "Ticker": cfg.ticker,
                 "Side": cfg.held_side.upper(),
-                "Count": s.get("count", cfg.count if cfg.count is not None else "auto"),
+                "Count": _fmt_count(s.get("count", cfg.count)),
                 "Stop (c)": cfg.stop_cents,
                 "Now (c)": "—" if ref is None else round(ref, 1),
                 "Dist (c)": "—" if distance is None else distance,
@@ -155,7 +159,7 @@ def _add_stop_form(store: StopStore, positions: list[dict[str, Any]]) -> None:
         st.caption("No open positions to protect.")
         return
 
-    labels = [f"{h['ticker']} — {h['side'].upper()} x{h['count']}" for h in held]
+    labels = [f"{h['ticker']} — {h['side'].upper()} x{h['count']:g}" for h in held]
     idx = st.selectbox(
         "Position",
         range(len(held)),
@@ -186,9 +190,12 @@ def _add_stop_form(store: StopStore, positions: list[dict[str, Any]]) -> None:
     use_auto = c4.checkbox("Auto count (use full position)", value=True, key="add_stop_auto")
     count_val = None
     if not use_auto:
+        held_count = float(chosen["count"])
         count_val = c5.number_input(
-            "Count", min_value=1, max_value=max(1, chosen["count"]),
-            value=chosen["count"], key="add_stop_count",
+            "Count", min_value=0.01, max_value=max(0.01, held_count),
+            value=max(0.01, held_count), step=0.01, format="%.2f",
+            key="add_stop_count",
+            help="Contracts to close on trigger (fractional allowed).",
         )
     env = c6.selectbox("Environment", ["prod", "demo"], index=0, key="add_stop_env")
     armed = st.checkbox("Armed (will place orders on trigger)", value=True, key="add_stop_armed")
@@ -210,7 +217,7 @@ def _add_stop_form(store: StopStore, positions: list[dict[str, Any]]) -> None:
                 ticker=chosen["ticker"],
                 held_side=chosen["side"],
                 stop_cents=float(stop_cents),
-                count=None if use_auto else int(count_val),
+                count=None if use_auto else round(float(count_val), 2),
                 slippage_cents=float(slippage),
                 trigger_ref=trigger_ref,
                 env=env,
@@ -222,6 +229,13 @@ def _add_stop_form(store: StopStore, positions: list[dict[str, Any]]) -> None:
         store.add(cfg)
         st.success(f"Added {chosen['side'].upper()} stop for {chosen['ticker']} at {stop_cents:.0f}c.")
         st.rerun()
+
+
+def _fmt_count(value: Any) -> str:
+    """Format a (possibly fractional) contract count; ``auto`` when unresolved."""
+    if isinstance(value, (int, float)):
+        return f"{value:g}"
+    return "auto"
 
 
 def _ago(ts: Any) -> str:

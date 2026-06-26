@@ -33,19 +33,21 @@ def test_base_url_for_env():
     assert base_url_for_env("anything-else") == DEMO_BASE_URL
 
 
-def test_signed_position_prefers_integer_position():
-    assert signed_position_contracts({"position": 7, "position_fp": "999"}) == 7
-    assert signed_position_contracts({"position": -3}) == -3
+def test_signed_position_uses_fixed_point_contracts():
+    # position_fp is a fixed-point contract count (NOT scaled): "0.20" = 0.2.
+    assert signed_position_contracts({"position_fp": "0.20"}) == pytest.approx(0.20)
+    assert signed_position_contracts({"position_fp": "-12.00"}) == pytest.approx(-12.0)
+    # position_fp wins over the legacy integer field when both are present.
+    assert signed_position_contracts({"position": 7, "position_fp": "0.50"}) == pytest.approx(0.50)
 
 
-def test_signed_position_falls_back_to_fp():
-    # position_fp is 2-decimal fixed point: 500 -> 5 contracts.
-    assert signed_position_contracts({"position_fp": "500"}) == 5
-    assert signed_position_contracts({"position_fp": "-1200"}) == -12
+def test_signed_position_falls_back_to_legacy_integer():
+    assert signed_position_contracts({"position": -3}) == pytest.approx(-3.0)
 
 
-def test_signed_position_missing_is_zero():
-    assert signed_position_contracts({}) == 0
+def test_signed_position_missing_or_bad_is_zero():
+    assert signed_position_contracts({}) == 0.0
+    assert signed_position_contracts({"position_fp": "oops"}) == 0.0
 
 
 def test_held_contracts_no_side():
@@ -62,8 +64,14 @@ def test_held_contracts_yes_side():
 
 
 def test_held_contracts_matches_market_ticker_key():
-    client = FakeClient(positions=[{"market_ticker": "KXT", "position_fp": "-400"}])
-    assert held_contracts(client, "KXT", "no") == 4
+    client = FakeClient(positions=[{"market_ticker": "KXT", "position_fp": "-4.00"}])
+    assert held_contracts(client, "KXT", "no") == pytest.approx(4.0)
+
+
+def test_held_contracts_fractional():
+    client = FakeClient(positions=[{"ticker": "KXT", "position_fp": "0.20"}])
+    assert held_contracts(client, "KXT", "yes") == pytest.approx(0.20)
+    assert held_contracts(client, "KXT", "no") == 0.0
 
 
 def test_held_contracts_not_found():
