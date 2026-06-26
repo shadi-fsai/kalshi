@@ -1,0 +1,59 @@
+6291 finalized KXBTC15M windows pulled; measuring...
+  ...scanned 250/6291 (250 measured)
+  ...scanned 500/6291 (500 measured)
+  ...scanned 750/6291 (750 measured)
+  ...scanned 1000/6291 (1000 measured)
+  ...scanned 1250/6291 (1250 measured)
+  ...scanned 1500/6291 (1498 measured)
+  ...scanned 1750/6291 (1747 measured)
+  ...scanned 2000/6291 (1997 measured)
+  ...scanned 2250/6291 (2247 measured)
+  ...scanned 2500/6291 (2497 measured)
+  ...scanned 2750/6291 (2747 measured)
+  ...scanned 3000/6291 (2997 measured)
+  ...scanned 3250/6291 (3247 measured)
+  ...scanned 3500/6291 (3497 measured)
+  ...scanned 3750/6291 (3747 measured)
+  ...scanned 4000/6291 (3995 measured)
+  ...scanned 4250/6291 (4245 measured)
+  ...scanned 4500/6291 (4495 measured)
+  ...scanned 4750/6291 (4745 measured)
+  ...scanned 5000/6291 (4995 measured)
+  ...scanned 5250/6291 (5245 measured)
+  ...scanned 5500/6291 (5495 measured)
+  ...scanned 5750/6291 (5745 measured)
+  ...scanned 6000/6291 (5995 measured)
+  ...scanned 6250/6291 (6245 measured)
+
+Finalized windows pulled: 6291
+Measured (>= 6 in-play min, decisive): 6286
+Skipped (insufficient in-play data): 5   Non-decisive (no clean result): 0
+(capped at 6500 windows)
+
+COMEBACKS - share of windows where the eventual WINNER once dipped BELOW each level
+(then still settled to 100%):
+
+level :  <40  <30  <20  <10  < 5  < 2
+ALL % :  45.7 27.4 14.4  5.4  2.4  0.7
+(n)   :  2874  1724  904  340  152   43   of 6286
+
+FAVORITE BLOW-UPS - share of windows where the eventual LOSER once climbed ABOVE each level
+(then still lost):
+
+level :  >60  >70  >80  >90  >95
+ALL % :  45.7 27.4 14.4  5.4  2.4
+sus%* :  33.2 18.8  8.9  3.1  0.9
+   *sustained = loser held above the level for >= 2 in-play min
+
+>10%net (fee-aware spike): buy the winning side at the ask when it dips to <=5c,
+sell at the best later bid; net >10% after Kalshi buy+sell fees. ALL: 2.3% (147/6286)
+
+per segment:
+segment          N  | comeback <40 <30 <20 <10 < 5 < 2  | blow-up >60 >70 >80 >90 >95  | >10%
+session:Asia  2078  |          45.5 26.4 13.4  5.0  2.4  0.5  |         45.5 26.4 13.4  5.0  2.4  |  2.2
+session:EU    1561  |          46.4 27.4 14.4  5.1  2.0  0.5  |         46.4 27.4 14.4  5.1  2.0  |  2.0
+session:US    2647  |          45.5 28.3 15.1  6.0  2.7  0.9  |         45.5 28.3 15.1  6.0  2.7  |  2.6
+dir:up        3071  |          44.9 27.1 13.9  5.1  2.4  0.7  |         44.9 27.1 13.9  5.1  2.4  |  2.3
+dir:down      3215  |          46.5 27.7 14.8  5.7  2.5  0.6  |         46.5 27.7 14.8  5.7  2.5  |  2.4
+
+saved chart -> btc15m_analysis.png

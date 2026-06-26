@@ -12,6 +12,7 @@ from kalshi.client import KalshiAPIError, KalshiClient
 from kalshi.markets import fp_to_float, series_ticker_for_market
 from kalshi.risk import correlation_matrix, high_correlation_pairs
 from ui import data
+from ui.stops import render_stops
 
 # Correlation window selector -> lookback in MINUTES. Short windows use 1-minute
 # candles for resolution; longer ones fall back to hourly to keep the per-
@@ -83,6 +84,8 @@ def render_portfolio(_client: KalshiClient) -> None:
             )
         st.dataframe(rows, use_container_width=True, hide_index=True)
         _render_correlation(_client, held)
+
+    render_stops(_client, positions)
 
     st.markdown("#### Resting orders")
     if not orders:

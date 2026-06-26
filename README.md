@@ -13,10 +13,11 @@ edge. It computes the Kelly-optimal stake and the number of contracts to buy.
 
 ## Features
 
-- Three pages (shared sidebar via `st.navigation`): **Find games & size** (browse
+- Four pages (shared sidebar via `st.navigation`): **Find games & size** (browse
   and size a bet), **Watch a game live** (auto-refreshing score + opportunities for
-  one game), and **Portfolio**. A "Watch this game live" button on Find hands a
-  selected game off to the Watch page.
+  one game), **Portfolio** (positions, correlations, and stop-losses), and
+  **Tennis match pricing** (Monte Carlo vs the market). A "Watch this game live"
+  button on Find hands a selected game off to the Watch page.
 - RSA API-key authentication against Kalshi production (request signing per the
   [Kalshi API key docs](https://docs.kalshi.com/getting_started/api_keys)).
 - Friendly game browser: filter by **Sport** then **Competition / league**
@@ -37,12 +38,13 @@ edge. It computes the Kelly-optimal stake and the number of contracts to buy.
   and sizing. A manual fallback fee (sidebar) is used only when the API fee
   can't be computed (e.g. flat-fee markets).
 - Portfolio view (**Portfolio** page): cash balance, portfolio value, current
-  positions (YES/NO contracts, exposure, realized P&L, fees paid), and resting
-  orders with per-order cancel.
+  positions (YES/NO contracts, exposure, realized P&L, fees paid), resting
+  orders with per-order cancel, and a synthetic stop-loss manager (see
+  "Portfolio stop-loss manager" below).
 - Position correlation matrix (**Portfolio** page): a color-coded matrix of the
   empirical correlation between your held positions, computed from each
-  position's mid-price returns over a selectable window (6h/24h/7d) and oriented
-  to the side you hold (a NO holding uses `1 - YES`), so a high positive value
+  position's mid-price returns over a selectable window (from 5m up to 7d) and
+  oriented to the side you hold (a NO holding uses `1 - YES`), so a high positive value
   means those bets tend to win and lose together. Pairs at or above an
   adjustable `|correlation|` threshold are called out so concentrated risk is
   obvious at a glance.
@@ -196,6 +198,76 @@ price history is unavailable (pre-game, illiquid, or no expiration time), the
 factor is `1.00x` and the app says why rather than silently dropping it. The
 pure math lives in [src/kalshi/risk.py](src/kalshi/risk.py).
 
+## Synthetic stop / hedge watcher
+
+Kalshi has **no native stop or trigger order**. A resting limit order can't act
+as a stop: a "sell my NO if it falls to 85c" order placed at 85c is already
+marketable against the ~95c bid and fills immediately (or is cancelled with
+`post_only`). The order schema only has `type`, `time_in_force`, `post_only`,
+`reduce_only`, `buy_max_cost`, and `order_group_id` - no trigger field. So a stop
+must run in a process *you* keep alive.
+
+The `kalshi-hedge-watcher` console script ([src/kalshi/cli/hedge_watcher.py](src/kalshi/cli/hedge_watcher.py))
+is that process for a single position. It streams the live price over the Kalshi
+WebSocket `ticker` channel ([src/kalshi/ws.py](src/kalshi/ws.py)) and, when the
+held side's price falls to/through your stop, fires **one** `reduce_only`
+immediate-or-cancel order that can only flatten the position (it can never flip
+you to the other side). The exit price is capped at `stop - max-slippage`, so a
+fast gap-through won't fill at a catastrophic price - if it can't fill within the
+cap it alerts loudly rather than chasing the market down. The watch/fire logic
+lives in [src/kalshi/stop_engine.py](src/kalshi/stop_engine.py) and is shared
+with the multi-stop engine below.
+
+> **This is a synthetic stop: it only protects while the watcher process is
+> running.** It is *not* a resting order on the exchange. If the process stops,
+> there is no protection.
+
+Safety defaults (per "never fail silently"):
+
+- Targets the **demo** environment unless `--live` is passed.
+- **Dry run by default** - it logs the order it *would* send; pass `--arm` to
+  place real orders. Production requires `--arm --live --yes-live`.
+- Single-fire guard, `client_order_id` idempotency, and a REST-poll fallback so
+  the stop is never blind during a WebSocket outage.
+
+```bash
+# Demo, dry run (no orders), auto count, stop when a held NO falls to 85c:
+uv run kalshi-hedge-watcher --ticker KX...-NO
+
+# Demo, actually place the protective close on trigger:
+uv run kalshi-hedge-watcher --ticker KX...-NO --arm
+```
+
+## Portfolio stop-loss manager
+
+The **Portfolio** page has a "Stop losses" section to add, view, and remove
+synthetic stop-losses on your open positions. Because Kalshi has no native stop
+order (see above), stops are run by a **separate always-on engine process** -
+the page is only the control surface:
+
+- The page writes stop configs to a local store (`./.kalshi_stops/`, override
+  with `KALSHI_STOPS_DIR`) and shows each stop's live status on a ~5s refresh.
+- The `kalshi-stop-engine` console script ([src/kalshi/cli/stop_engine.py](src/kalshi/cli/stop_engine.py),
+  core in [src/kalshi/stop_engine.py](src/kalshi/stop_engine.py)) reads that
+  store, watches each market's price over the WebSocket `ticker` channel (REST
+  fallback when it drops), and on trigger fires one `reduce_only` IOC close that
+  can only flatten the position. It writes status + a heartbeat back to the store.
+- If the engine is not running, the page detects the stale heartbeat and warns
+  that **stops are NOT being managed** (a stop only protects while the engine
+  runs).
+
+Start the engine (each stop fires on its own environment; prod = real orders):
+
+```bash
+uv run kalshi-stop-engine
+```
+
+Each stop carries its own environment (`prod`/`demo`) and an `armed` flag, and
+the add form requires an explicit real-money acknowledgement before adding an
+armed production stop. A stop sells the held side at `stop - max-slippage`, so a
+fast gap-through is bounded by the slippage cap rather than filling at any price
+(if it can't fill within the cap it alerts loudly for manual action).
+
 ## Testing
 
 ```bash
@@ -208,16 +280,23 @@ uv run pytest
 app.py                 Entrypoint: st.navigation router + shared sidebar
 app_pages/find.py      Page: browse/search games (or enter a ticker) and size a bet
 app_pages/watch.py     Page: watch one live game (auto-refreshing score + opportunities)
-app_pages/portfolio.py Page: balance, positions, and resting orders
+app_pages/portfolio.py Page: balance, positions, resting orders, stop-losses
 app_pages/tennis.py    Page: tennis match Monte Carlo pricing vs the market
 ui/data.py             Streamlit-cached data fetchers + client construction seam
 ui/settings.py         Shared sidebar + Settings (bankroll, Kelly, volatility, fees)
 ui/sizer.py            Bet sizer (Kelly + Sharpe) and the order ticket
 ui/games.py            Game discovery (browse/filters/favorites) + manual ticker
 ui/portfolio.py        Portfolio view (incl. position correlation matrix)
+ui/stops.py            Portfolio stop-loss manager (add/list/remove + live status)
 ui/tennis.py           Tennis pricing UI (inputs, simulation, market compare)
 src/kalshi/auth.py     RSA request signing + signed headers
 src/kalshi/client.py   REST client (events, markets, orderbook, candlesticks, balance)
+src/kalshi/ws.py       WebSocket client (signed connect, ticker channel stream)
+src/kalshi/stops.py    Stop store (config/status files) + held-side trigger math
+src/kalshi/positions.py  Shared env base-URL + position/price helpers
+src/kalshi/stop_engine.py  Synthetic stop engine core (run multi-stop + run_single)
+src/kalshi/cli/stop_engine.py    Console script: kalshi-stop-engine (Portfolio engine)
+src/kalshi/cli/hedge_watcher.py  Console script: kalshi-hedge-watcher (single stop)
 src/kalshi/kelly.py    Pure Kelly math
 src/kalshi/markets.py  Pure market/event/timing/ITM helpers
 src/kalshi/fees.py     Kalshi fee-model math
@@ -225,4 +304,15 @@ src/kalshi/orders.py   Buy/sell + YES/NO -> YES-book order translation
 src/kalshi/risk.py     Realized volatility + Sharpe metrics + correlation matrix
 src/kalshi/tennis.py   Tennis scoring model + Monte Carlo match pricing
 tests/                 Unit tests (see TESTING.md)
+research/              Ad-hoc research scripts, grouped by project (not app code):
+research/soccer/         Soccer favorite/correct-score backtests (+ shared helper)
+research/blown_leads/    Blown-lead / comeback frequency analyses across sports
+research/tennis_volatility/  Tennis price-swing / WTA-vs-ATP volatility studies
+research/btc15m/         BTC 15-minute market backtest + analysis (cache/plots)
 ```
+
+Research scripts under `research/` are standalone and import the installed
+`kalshi` package. They need the optional research dependencies (matplotlib,
+numpy): install them with `uv sync --group research`. Run each from its own
+project folder so co-located helpers (e.g. `scratch_soccer_secondary.py`)
+resolve (e.g. `cd research/soccer && uv run python scratch_top95_backtest.py`).

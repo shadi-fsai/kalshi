@@ -1,15 +1,15 @@
 """Streamlit entrypoint: multipage router for the Kalshi Kelly app.
 
-This script wires the three pages together with ``st.navigation`` and renders the
+This script wires the four pages together with ``st.navigation`` and renders the
 shared sidebar once per rerun so the connection, bankroll, Kelly, volatility, and
-fee settings apply across every page. The actual page logic lives in ``pages/``
-and reuses the building blocks in the ``ui`` package; pure market/finance logic
-stays in the ``kalshi`` package.
+fee settings apply across every page. The actual page logic lives in
+``app_pages/`` and reuses the building blocks in the ``ui`` package; pure
+market/finance logic stays in the ``kalshi`` package.
 
 Pages:
 - Find games & size: browse/search open games (or enter a ticker) and size a bet.
 - Watch a game live: monitor one game's score + opportunities, size on the fly.
-- Portfolio: balance, positions, and resting orders (with cancel).
+- Portfolio: balance, positions, resting orders (with cancel), and stop-losses.
 - Tennis match pricing: Monte Carlo a best-of-3 match vs the Kalshi market.
 """
 

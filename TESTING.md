@@ -1,11 +1,11 @@
 # Testing
 
 The test suite covers the pure business logic in `src/kalshi/` (auth, the REST
-client, fees, the Kelly sizer, order translation, and the market/event/timing
-helpers). Streamlit UI code in `app.py` is intentionally **not** unit-tested;
-all testable logic has been extracted into importable modules (chiefly
-`kalshi.markets`), leaving `app.py` to only wire up caching, network fetches,
-and rendering.
+client, fees, the Kelly sizer, order translation, the market/event/timing
+helpers, realized-volatility/risk metrics, the tennis model, and the stop-loss
+store/engine). Streamlit UI code is kept thin; the page-bound `ui/` modules are
+exercised by import, byte-compile, and AppTest smoke tests, while all
+non-trivial logic lives in importable modules so it can be unit-tested directly.
 
 ## Running the tests
 
@@ -18,12 +18,12 @@ Coverage is enforced via `pyproject.toml`:
 
 ```toml
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
 testpaths = ["tests"]
 addopts = "--cov=src/kalshi --cov-report=term-missing --cov-fail-under=85"
 ```
 
-The run fails if total coverage drops below **85%** (currently ~94%). To see
+The run fails if total coverage drops below **85%** (currently ~92%). To see
 which lines are uncovered, read the `Missing` column in the terminal report.
 
 Useful variations:
@@ -64,6 +64,17 @@ uv run pytest -p no:cov                    # skip coverage gate while iterating
 | `test_kelly.py` | `kalshi.kelly` | Kelly sizing math, including fee-adjusted breakeven, no-bet on marginal edge, and contract counting. |
 | `test_fees.py` | `kalshi.fees` | Quadratic fee math, rounding, multiplier scaling, per-contract vs order fees, fee-type handling, and parsing from a series payload. |
 | `test_orders.py` | `kalshi.orders` | Translating human buy/sell × YES/NO into the V2 YES-book `bid`/`ask` + price. |
+| `test_risk.py` | `kalshi.risk` | Realized-volatility / Sharpe metrics, the volatility stake shrink, candlestick series parsing, high-water marks, and the position correlation matrix. |
+| `test_tennis.py` | `kalshi.tennis` | Best-of-3 point model and seeded Monte Carlo match pricing. |
+| `test_stops.py` | `kalshi.stops` | `StopConfig` (de)serialization + validation, held-side trigger math (YES/NO), `exit_book_order` mapping, and `StopStore` CRUD / status / heartbeat with corrupt-file tolerance. |
+| `test_positions.py` | `kalshi.positions` | Env base-URL mapping, signed position parsing (`position` vs `position_fp`), held-side contract counts, and the REST price snapshot. |
+| `test_stop_engine.py` | `kalshi.stop_engine` | Trigger evaluation, `fire()` filled/partial/error/disarmed paths, client caching, `run_single` no-position, and config reconcile start/cancel. |
+| `test_ws.py` | `kalshi.ws` | WebSocket URL derivation (prod/demo/env override), dollar parsing, and `ticker` message parsing. |
+| `test_cli.py` | `kalshi.cli` | Console-script entry points: arg parsing, demo/dry-run defaults, the production-arming guard, and the failure exit code. |
+| `test_tennis_ui.py` | `ui.tennis` | The tennis page's pure edge-evaluation helper (no Streamlit render). |
+| `test_ui_imports.py` | `ui` | Every `ui/` module imports cleanly and exposes the callables the pages rely on. |
+| `test_pages_compile.py` | `app_pages` | Every entrypoint/page script byte-compiles (syntax/indentation guard). |
+| `test_app_smoke.py` | pages + `ui.data` | AppTest smoke run of each page with a fake client (no network): asserts the page renders without uncaught exceptions. |
 
 ## Conventions for adding tests
 

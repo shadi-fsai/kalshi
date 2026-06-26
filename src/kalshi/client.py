@@ -1,8 +1,10 @@
 """Thin REST client for the Kalshi Trade API.
 
-Only the read endpoints needed by the Kelly sizing app are implemented:
-events, markets, orderbook, and portfolio balance. This client never places
-orders.
+Implements the endpoints the app needs: events, markets, orderbook,
+candlesticks, series fee models, milestones/live data, and portfolio balance +
+positions. It also places and cancels orders (``create_order`` / ``cancel_order``,
+including ``reduce_only`` for protective exits), so it must be pointed at the
+right environment and used with care.
 
 Base URLs (see https://docs.kalshi.com/getting_started/api_environments):
   Production: https://external-api.kalshi.com/trade-api/v2
@@ -33,7 +35,7 @@ class KalshiAPIError(Exception):
 
 
 class KalshiClient:
-    """Authenticated client for Kalshi Trade API read endpoints."""
+    """Authenticated client for Kalshi Trade API read + order endpoints."""
 
     def __init__(
         self,
@@ -298,6 +300,7 @@ class KalshiClient:
         client_order_id: str,
         outcome_side: str | None = None,
         post_only: bool = False,
+        reduce_only: bool = False,
         time_in_force: str = "good_till_canceled",
         self_trade_prevention_type: str = "taker_at_cross",
     ) -> dict[str, Any]:
@@ -314,6 +317,10 @@ class KalshiClient:
         order maker-only -- it never crosses the book or pays a taker fee, and is
         auto-cancelled if it would match a resting order. Use
         ``time_in_force="immediate_or_cancel"`` for taker (cross-now) behavior.
+
+        ``reduce_only=True`` guarantees the order can only shrink an existing
+        position (never open or flip one) -- used for protective exits/stops so a
+        flatten can't accidentally build the opposite side.
 
         See https://docs.kalshi.com/api-reference/orders/create-order-v2
         """
@@ -336,6 +343,8 @@ class KalshiClient:
             body["outcome_side"] = outcome_side
         if post_only:
             body["post_only"] = True
+        if reduce_only:
+            body["reduce_only"] = True
         return self._request("POST", "/portfolio/events/orders", body=body)
 
     def cancel_order(self, order_id: str) -> dict[str, Any]:

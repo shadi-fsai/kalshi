@@ -1,0 +1,56 @@
+6293 finalized KXBTC15M windows; caching price paths...
+  ...cached 250/6293 (250 usable)
+  ...cached 500/6293 (500 usable)
+  ...cached 750/6293 (750 usable)
+  ...cached 1000/6293 (1000 usable)
+  ...cached 1250/6293 (1250 usable)
+  ...cached 1500/6293 (1498 usable)
+  ...cached 1750/6293 (1747 usable)
+  ...cached 2000/6293 (1997 usable)
+  ...cached 2250/6293 (2247 usable)
+  ...cached 2500/6293 (2497 usable)
+  ...cached 2750/6293 (2747 usable)
+  ...cached 3000/6293 (2997 usable)
+  ...cached 3250/6293 (3247 usable)
+  ...cached 3500/6293 (3497 usable)
+  ...cached 3750/6293 (3747 usable)
+  ...cached 4000/6293 (3995 usable)
+  ...cached 4250/6293 (4245 usable)
+  ...cached 4500/6293 (4495 usable)
+  ...cached 4750/6293 (4745 usable)
+  ...cached 5000/6293 (4995 usable)
+  ...cached 5250/6293 (5245 usable)
+  ...cached 5500/6293 (5495 usable)
+  ...cached 5750/6293 (5745 usable)
+  ...cached 6000/6293 (5995 usable)
+  ...cached 6250/6293 (6245 usable)
+wrote 6288 windows -> btc15m_cache.json
+
+==== IDEALIZED fills (entry=90c, take=98c, deploy=80%, fees 1c/1c) ====
+  window range        : 2026-04-19 00:00 -> 2026-06-24 16:00 UTC  (66.7 days)
+  windows in sample   : 6288
+  trades taken        : 6286  (100.0% of windows hit 90c)
+  take-profit @ 98c   : 5559  (88.4%)
+  held to win (100c)  : 434  (6.9%)
+  held to LOSS (0c)   : 293  (4.7%)
+  favorite win rate   : 95.34%  (blow-up / loss rate 4.66%)
+  mean per-trade ret  : +1.853%   median +6.593%
+  per-trade win/loss  : +6c...+9c on a win, -91c on a loss (idealized)
+  FINAL bankroll      : 0.0000x  (-100.0% total)
+  annualized (CAGR)   : -100.0%/yr
+  max drawdown        : 100.0%
+
+==== REALISTIC fills (entry=90c, take=98c, deploy=80%, fees 1c/1c) ====
+  window range        : 2026-04-19 00:00 -> 2026-06-24 16:00 UTC  (66.7 days)
+  windows in sample   : 6288
+  trades taken        : 6286  (100.0% of windows hit 90c)
+  take-profit @ 98c   : 5552  (88.3%)
+  held to win (100c)  : 439  (7.0%)
+  held to LOSS (0c)   : 295  (4.7%)
+  favorite win rate   : 95.31%  (blow-up / loss rate 4.69%)
+  mean per-trade ret  : -1.798%   median +3.066%
+  per-trade win/loss  : +6c...+9c on a win, -91c on a loss (idealized)
+  FINAL bankroll      : 0.0000x  (-100.0% total)
+  annualized (CAGR)   : -100.0%/yr
+  max drawdown        : 100.0%
+

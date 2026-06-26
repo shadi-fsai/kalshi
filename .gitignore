@@ -15,5 +15,8 @@ dist/
 # Streamlit
 .streamlit/secrets.toml
 
+# Stop-loss engine store (local runtime state)
+.kalshi_stops/
+
 # OS / editor
 .DS_Store

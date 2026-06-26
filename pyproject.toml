@@ -10,7 +10,12 @@ dependencies = [
     "cryptography>=42.0",
     "python-dotenv>=1.0",
     "watchdog>=6.0.0",
+    "websockets>=13.0",
 ]
+
+[project.scripts]
+kalshi-stop-engine = "kalshi.cli.stop_engine:main"
+kalshi-hedge-watcher = "kalshi.cli.hedge_watcher:main"
 
 [dependency-groups]
 dev = [
@@ -18,6 +23,12 @@ dev = [
     "pytest-cov>=5.0",
     "requests-mock>=1.12",
     "freezegun>=1.5",
+]
+# Ad-hoc analysis scripts under research/ (not needed by the app or tests).
+# Install with: uv sync --group research
+research = [
+    "matplotlib>=3.7",
+    "numpy>=1.26",
 ]
 
 [build-system]
